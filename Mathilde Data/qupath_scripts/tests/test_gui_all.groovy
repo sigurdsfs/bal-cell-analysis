@@ -9,7 +9,7 @@ def prefs = Preferences.userRoot().node("bal_segmentation")
 def tasks = ["Segment cells", "Prepare training regions",
              "Export corrections to training corpus", "Train model on corrected regions",
              "Classify cells: explore (no labels yet)", "Classify cells: train classifier",
-             "Classify cells: predict"]
+             "Classify cells: predict", "Export labelled cells (segmentation + classifier)"]
 def models = ["cyto3 cells + InstanSeg nuclei", "Cellpose cyto3 (whole cells)",
               "Cellpose-SAM (cpsam)", "InstanSeg: brightfield nuclei", "Custom Cellpose model..."]
 try { Platform.startup({ } as Runnable) } catch (IllegalStateException e) { }

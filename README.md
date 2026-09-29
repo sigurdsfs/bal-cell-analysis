@@ -42,6 +42,7 @@ Everything is reachable from **one entry point**: `qupath_bal_gui.groovy`.
 | **Classify cells: explore** | Clusters cells by transformer embedding; writes a montage to name the clusters |
 | **Classify cells: train classifier** | Trains a cell-type classifier from your hand-set classes |
 | **Classify cells: predict** | Applies a saved classifier and writes the classes back onto the cells |
+| **Export labelled cells** | One labelled set → Cellpose masks **and** per-class crops for the classifier |
 
 Two scripts run outside the dialog:
 - **`qupath_batch_slides.groovy`** — runs the pipeline over every image in the project,

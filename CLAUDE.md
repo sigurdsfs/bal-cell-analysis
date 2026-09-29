@@ -76,7 +76,9 @@ qupath_bal_gui.groovy
 ├── qupath_prepare_training.groovy      Training/Validation rectangles
 ├── qupath_export_training_data.groovy  adds corrections to the shared corpus
 ├── qupath_train_cellpose.groovy        fine-tuning (+ checkpoint pruning)
-└── qupath_classify_cells.groovy        drives the Python classifier
+├── qupath_classify_cells.groovy        drives the Python classifier
+├── qupath_export_labels.groovy         labelled cells -> masks AND per-class crops
+└── qupath_batch_slides.groovy          the whole pipeline over every image in a project
         └── bal_classify/embed_cells.py + classify_cells.py
 ```
 
@@ -111,10 +113,13 @@ Standalone helpers: `qupath_test_region.groovy` (benchmark regions),
   therefore no cheaper than the whole slide.
 - **Training reads each image's SAVED data.** Unsaved rectangles produce
   "Found 0 Training objects" and then `ERROR: no files in --dir folder`.
-- **Ground truth = rectangle classed `Training`/`Validation`, outlines inside UNCLASSIFIED.**
-  The label mask uses `useFilter(o -> o.getPathClass() == null)`, so a classified cell is
-  dropped from the mask while its pixels stay in the image — i.e. taught as background.
-  Cell-type labels and segmentation ground truth cannot share objects.
+- **Ground truth = rectangle classed `Training`/`Validation`.** The extension's own exporter
+  builds its mask with `useFilter(o -> o.getPathClass() == null)`, so a cell you classify
+  "Macrophage" is dropped from the mask while its pixels stay in the image — taught as
+  background. **`qupath_export_labels.groovy` avoids this** by writing the masks itself with
+  the opposite filter (exclude only the Training/Validation rectangles), so one labelled set
+  serves both segmentation and classification. Use it rather than
+  `qupath_export_training_data.groovy` whenever cells carry cell-type classes.
 - **`moveRenameAndReturnModelFile` returns the FIRST file in `<train>/models`, not the newest.**
   Clear that folder before training or you get a model from days ago.
 - **`saveTrainingImages()` only runs when `cleanTrainingDir` is set, and cleaning erases the

@@ -130,7 +130,8 @@ taskBox.getItems().addAll(
         "Train model on corrected regions",
         "Classify cells: explore (no labels yet)",
         "Classify cells: train classifier",
-        "Classify cells: predict")
+        "Classify cells: predict",
+        "Export labelled cells (segmentation + classifier)")
 taskBox.getSelectionModel().select(prefs.get("task", "Segment cells"))
 def taskDesc = new Label()
 taskDesc.setWrapText(true)
@@ -209,6 +210,7 @@ def syncEnabled = {
     boolean clsExplore = task.endsWith("explore (no labels yet)")
     boolean clsTrain = task.endsWith("train classifier")
     boolean clsPredict = task.endsWith("predict")
+    boolean exportLabels = task.startsWith("Export labelled cells")
 
     taskDesc.setText(
         segmenting ? "Segment cells in the selected region(s) and measure them." :
@@ -241,13 +243,14 @@ def syncEnabled = {
     // training-only
     [trainRegionsField, valRegionsField, trainSizeField].each { it.setDisable(!preparing) }
     [epochsField, lrField, weightDecayField, sgdCheck].each { it.setDisable(!training) }
-    corpusField.setDisable(!(exporting || training)); corpusBrowse.setDisable(!(exporting || training))
+    corpusField.setDisable(!(exporting || training || exportLabels))
+    corpusBrowse.setDisable(!(exporting || training || exportLabels))
     clustersField.setDisable(!clsExplore)
     classifierField.setDisable(!(clsTrain || clsPredict)); classifierBrowse.setDisable(!(clsTrain || clsPredict))
     reuseCheck.setDisable(!classifying)
     // Classification works on whatever cells already exist, so the segmentation model and
     // its settings are irrelevant here.
-    if (classifying) {
+    if (classifying || exportLabels) {
         [outputBox, regionBox, featuresCheck, clumpCheck, tileField, expansionField, clumpField,
          pixelField, diameterField].each { it.setDisable(true) }
         modelDesc.setText("Classification uses the cells already in the image -- the segmentation\n" +
@@ -487,6 +490,18 @@ import qupath.lib.measurements.*
 """
 
 long t0 = System.currentTimeMillis()
+
+// --- export hand-labelled cells for both pipelines ---------------------------
+if (task.startsWith("Export labelled cells")) {
+    BAL_GT_DIR = corpusField.getText()?.trim() ?: ""
+    BAL_EXPORT_WHAT = 'BOTH'
+    println "=== ${task} ==="
+    evaluate(PRE + new File(scriptDir, "qupath_export_labels.groovy").text)
+    def mins = (System.currentTimeMillis() - t0) / 60000.0
+    println "=== finished in ${String.format('%.1f', mins)} min ==="
+    Dialogs.showInfoNotification("BAL export", String.format("Export finished in %.1f min", mins))
+    return
+}
 
 // --- classification tasks: they use the cells already present ----------------
 if (task.startsWith("Classify cells")) {

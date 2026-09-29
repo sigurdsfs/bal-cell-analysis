@@ -6,8 +6,12 @@ neutrophils from eosinophils from monocytes. Phikon-v2 is a ViT trained on histo
 slides; its embeddings capture that texture, and a small classifier on top needs far
 fewer labels than training a network from scratch.
 
-Input : cells exported from QuPath as GeoJSON (export_cells.groovy writes this),
-        or --scan to segment fresh regions with Cellpose directly from the zarr.
+Two input modes:
+  --geojson  cells exported from QuPath (positions read back from one slide's zarr)
+  --crops    a folder of PNG crops written by qupath_export_labels.groovy, filed by class:
+             crops/<ClassName>/<slide>_<id>.png. This works across ANY number of slides,
+             because the pixels come from QuPath rather than one hard-coded zarr -- use it
+             for training the classifier on labels gathered from several slides.
 Output: cells.parquet with one row per cell -- centroid, QuPath measurements, and the
         embedding as e000...eNNN columns.
 
@@ -91,22 +95,49 @@ def embed(crops, batch=64, device=None):
     return np.concatenate(feats)
 
 
+def load_crops(folder):
+    """Read crops/<ClassName>/*.png, taking the class from the folder name."""
+    rows, images = [], []
+    from PIL import Image as PILImage
+    for class_dir in sorted(p for p in folder.iterdir() if p.is_dir()):
+        for f in sorted(class_dir.glob("*.png")):
+            img = np.array(PILImage.open(f).convert("RGB"))
+            images.append(img)
+            rows.append({"id": f.stem, "qupath_class": class_dir.name,
+                         "crop": str(f.relative_to(folder)), "x": np.nan, "y": np.nan})
+    if not rows:
+        raise SystemExit(f"no PNG crops under {folder}")
+    return pd.DataFrame(rows), np.stack(images)
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--geojson", type=Path, required=True)
+    ap.add_argument("--geojson", type=Path)
+    ap.add_argument("--crops", type=Path,
+                    help="folder of class subfolders of PNG crops (multi-slide friendly)")
     ap.add_argument("--out", type=Path, default=Path("cells.parquet"))
     ap.add_argument("--crop", type=int, default=CROP_PX)
+    ap.add_argument("--zarr", default=ZARR, help="only used with --geojson")
     ap.add_argument("--limit", type=int, default=0, help="embed only the first N cells")
     args = ap.parse_args()
 
-    cells = load_cells_from_geojson(args.geojson)
-    if args.limit:
-        cells = cells.head(args.limit)
-    print(f"{len(cells)} cells from {args.geojson.name}")
-
-    z = zarr.open(ZARR, mode="r")
-    print("cutting crops...")
-    crops = crop_stack(z, cells["x"].values, cells["y"].values, args.crop)
+    if args.crops:
+        cells, crops = load_crops(args.crops)
+        if args.limit:
+            cells, crops = cells.head(args.limit), crops[:args.limit]
+        print(f"{len(cells)} crops from {args.crops} "
+              f"({cells.qupath_class.nunique()} classes, "
+              f"{cells.qupath_class.value_counts().to_dict()})")
+    else:
+        if not args.geojson:
+            raise SystemExit("give --geojson or --crops")
+        cells = load_cells_from_geojson(args.geojson)
+        if args.limit:
+            cells = cells.head(args.limit)
+        print(f"{len(cells)} cells from {args.geojson.name}")
+        z = zarr.open(args.zarr, mode="r")
+        print("cutting crops...")
+        crops = crop_stack(z, cells["x"].values, cells["y"].values, args.crop)
     print(f"embedding with {MODEL_ID}...")
     feats = embed(crops)
     print(f"embeddings: {feats.shape}")
