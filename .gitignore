@@ -1,0 +1,50 @@
+# Slide data and derived pixels -- tens of GB, and reproducible from the .vsi
+SFS/
+*.vsi
+*.ets
+*.meta
+*.bfmemo
+*.zarr/
+*.tif
+*.tiff
+
+# The 39-slide batch (~23 GB). The scanner's slide list is small and worth keeping,
+# since it maps slide numbers to tray positions.
+Mathilde Data/PED 24-03 - BAL/*
+!Mathilde Data/PED 24-03 - BAL/*.csv
+!Mathilde Data/PED 24-03 - BAL/*.xlsx
+
+# QuPath project: its data files are large and change on every run.
+# The class list IS tracked, since it defines the BAL cell types.
+QuPath Project/*
+!QuPath Project/classifiers/
+QuPath Project/classifiers/*
+!QuPath Project/classifiers/classes.json
+
+# Training corpus: image/mask pairs, ~8 GB. Back this up separately -- it is hand-corrected
+# ground truth and expensive to recreate, but it does not belong in git.
+Mathilde Data/cellpose_ground_truth/
+
+# Trained models and their logs
+*.cpm
+*.joblib
+models/
+
+# Classifier working files: regenerated from the cells in QuPath
+Mathilde Data/bal_classify/cells.geojson
+Mathilde Data/bal_classify/cells.parquet
+Mathilde Data/bal_classify/predictions.csv
+Mathilde Data/bal_classify/cluster_*.csv
+Mathilde Data/bal_classify/*.png
+
+# Cellpose scratch
+cellpose-temp/
+cellpose-training/
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Office lock files
+~$*

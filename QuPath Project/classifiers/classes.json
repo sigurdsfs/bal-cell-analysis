@@ -1,0 +1,40 @@
+{
+  "pathClasses": [
+    {
+      "name": "Macrophage",
+      "color": -1663232
+    },
+    {
+      "name": "Lymphocyte",
+      "color": -16736653
+    },
+    {
+      "name": "Neutrophil",
+      "color": -16747854
+    },
+    {
+      "name": "Eosinophil",
+      "color": -2793984
+    },
+    {
+      "name": "Epithelial",
+      "color": -3376729
+    },
+    {
+      "name": "Clump/debris",
+      "color": -8882056
+    },
+    {
+      "name": "Uncertain",
+      "color": -990142
+    },
+    {
+      "name": "Training",
+      "color": -16736653
+    },
+    {
+      "name": "Validation",
+      "color": -2793984
+    }
+  ]
+}
