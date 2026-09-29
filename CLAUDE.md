@@ -25,7 +25,7 @@ handing work over, name them rather than implying everything was verified.
 
 ## How to test
 
-All harnesses are in the session scratchpad; re-create them if missing. Run with:
+The harnesses live in `Mathilde Data/qupath_scripts/tests/`. Run with:
 
 ```bash
 "/c/Users/Labsfs/AppData/Local/QuPath-0.7.0/QuPath-0.7.0 (console).exe" script <file.groovy>
@@ -40,10 +40,16 @@ All harnesses are in the session scratchpad; re-create them if missing. Run with
 | `test_api_calls.groovy` | every `Dialogs.*` / `FileChoosers.*` call actually exists |
 | `test_prune2.groovy` | checkpoint pruning, including the log being wiped mid-run |
 | `test_summary2.groovy` | training-loss verdicts against synthetic curves |
+| `test_corpus_multislide.groovy` | corpus prefixing, per-slide counts, train/test overlap |
+| `test_notebook_parity.groovy` | **QuPath vs the notebook** on the benchmark region (needs a project) |
 
 **JavaFX initialises headlessly here.** `Platform.startup{}`, then evaluate the GUI script
 with `.showAndWait()` replaced by `.with { Optional.empty() }` inside `Platform.runLater`.
 Drive the branches by writing to the prefs node (`task`, `model`) before each run.
+
+**Paths live in `bal_config.groovy`.** Never hard-code a new one: add a key there, read it
+with `CFG.key ?: <literal fallback>` so the script still runs standalone. A machine-specific
+`bal_config.local.groovy` (git-ignored) overrides it.
 
 ### What cannot be tested headlessly
 

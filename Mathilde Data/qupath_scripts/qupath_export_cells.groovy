@@ -17,8 +17,19 @@
 import qupath.lib.objects.PathObject
 import qupath.lib.io.PathIO
 
+// Machine-specific paths come from bal_config.groovy (with bal_config.local.groovy
+// overriding it); the literals below are only a fallback for running this file alone.
+def CFG = [:]
+try {
+    def cfgFile = [new File(System.getProperty("user.home") + "/QuPath/v0.7/scripts", "bal_config.groovy"),
+                   new File("C:/Users/Labsfs/Desktop/Mathilde/Mathilde Data/qupath_scripts", "bal_config.groovy")]
+            .find { it.exists() }
+    if (cfgFile != null) CFG = evaluate(cfgFile) ?: [:]
+} catch (Exception ignored) { }
+
+
 def MODE = binding.hasVariable('BAL_EXPORT_MODE') ? BAL_EXPORT_MODE.toString().toUpperCase() : 'EXPORT'
-def DIR = new File("C:/Users/Labsfs/Desktop/Mathilde/Mathilde Data/bal_classify")
+def DIR = new File(CFG.balClassifyDir ?: "C:/Users/Labsfs/Desktop/Mathilde/Mathilde Data/bal_classify")
 DIR.mkdirs()
 
 def cells = getCellObjects()

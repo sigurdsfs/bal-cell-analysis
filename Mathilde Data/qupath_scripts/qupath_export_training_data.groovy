@@ -37,20 +37,31 @@
 import qupath.ext.biop.cellpose.Cellpose2D
 import qupath.ext.biop.cellpose.CellposeSetup
 
+// Machine-specific paths come from bal_config.groovy (with bal_config.local.groovy
+// overriding it); the literals below are only a fallback for running this file alone.
+def CFG = [:]
+try {
+    def cfgFile = [new File(System.getProperty("user.home") + "/QuPath/v0.7/scripts", "bal_config.groovy"),
+                   new File("C:/Users/Labsfs/Desktop/Mathilde/Mathilde Data/qupath_scripts", "bal_config.groovy")]
+            .find { it.exists() }
+    if (cfgFile != null) CFG = evaluate(cfgFile) ?: [:]
+} catch (Exception ignored) { }
+
+
 def CORPUS = binding.hasVariable('BAL_GT_DIR') ? new File(BAL_GT_DIR.toString())
-        : new File("C:/Users/Labsfs/Desktop/Mathilde/Mathilde Data/cellpose_ground_truth")
+        : new File(CFG.groundTruthDir ?: "C:/Users/Labsfs/Desktop/Mathilde/Mathilde Data/cellpose_ground_truth")
 def MODEL = binding.hasVariable('BAL_MODEL') ? BAL_MODEL.toString() : 'cyto3'
 double DIAM = binding.hasVariable('BAL_DIAMETER') ? BAL_DIAMETER as double : 58
 
 // Same environment wiring as the other scripts.
-def samPython = [
+def samPython = (CFG.pythonCellpose4 ?: [
         'C:/Users/Labsfs/AppData/Local/miniconda3/envs/cellpose_seg/python.exe',
         'C:/Users/lababr/AppData/Local/anaconda3/envs/cellpose_seg/python.exe',
-].find { new File(it).exists() }
-def legacyPython = [
+]).find { new File(it).exists() }
+def legacyPython = (CFG.pythonCellpose3 ?: [
         'C:/Users/Labsfs/AppData/Local/miniconda3/envs/cellpose3/python.exe',
         'C:/Users/lababr/AppData/Local/anaconda3/envs/cellpose3/python.exe',
-].find { new File(it).exists() }
+]).find { new File(it).exists() }
 if (samPython != null) CellposeSetup.getInstance().setCellposeSAMPythonPath(samPython)
 if (legacyPython != null) CellposeSetup.getInstance().setCellposePythonPath(legacyPython)
 

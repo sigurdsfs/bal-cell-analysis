@@ -30,11 +30,11 @@ def CLASSIFIER = binding.hasVariable('BAL_CLASSIFIER') && BAL_CLASSIFIER?.toStri
 // cells haven't changed since it was written.
 boolean REUSE = binding.hasVariable('BAL_REUSE_EMBEDDINGS') ? BAL_REUSE_EMBEDDINGS as boolean : false
 
-def BAL_DIR = new File("C:/Users/Labsfs/Desktop/Mathilde/Mathilde Data/bal_classify")
-def python = [
+def BAL_DIR = new File(CFG.balClassifyDir ?: "C:/Users/Labsfs/Desktop/Mathilde/Mathilde Data/bal_classify")
+def python = (CFG.pythonCellpose4 ?: [
         'C:/Users/Labsfs/AppData/Local/miniconda3/envs/cellpose_seg/python.exe',
         'C:/Users/lababr/AppData/Local/anaconda3/envs/cellpose_seg/python.exe',
-].find { new File(it).exists() }
+]).find { new File(it).exists() }
 if (python == null) {
     Dialogs.showErrorMessage("Classify cells", "No cellpose_seg environment found -- it holds the transformer.")
     return
@@ -59,6 +59,17 @@ import qupath.lib.roi.*
 import qupath.lib.objects.*
 import qupath.lib.regions.*
 import qupath.lib.measurements.*
+
+// Machine-specific paths come from bal_config.groovy (with bal_config.local.groovy
+// overriding it); the literals below are only a fallback for running this file alone.
+def CFG = [:]
+try {
+    def cfgFile = [new File(System.getProperty("user.home") + "/QuPath/v0.7/scripts", "bal_config.groovy"),
+                   new File("C:/Users/Labsfs/Desktop/Mathilde/Mathilde Data/qupath_scripts", "bal_config.groovy")]
+            .find { it.exists() }
+    if (cfgFile != null) CFG = evaluate(cfgFile) ?: [:]
+} catch (Exception ignored) { }
+
 """
 
 // Runs a command, echoing its output into the QuPath log as it arrives.

@@ -48,3 +48,6 @@ __pycache__/
 
 # Office lock files
 ~$*
+
+# Per-machine path overrides
+bal_config.local.groovy

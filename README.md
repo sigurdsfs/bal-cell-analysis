@@ -43,6 +43,13 @@ Everything is reachable from **one entry point**: `qupath_bal_gui.groovy`.
 | **Classify cells: train classifier** | Trains a cell-type classifier from your hand-set classes |
 | **Classify cells: predict** | Applies a saved classifier and writes the classes back onto the cells |
 
+Two scripts run outside the dialog:
+- **`qupath_batch_slides.groovy`** — runs the pipeline over every image in the project,
+  unattended, saving each one and writing `batch_summary.csv`. Built for the 39-slide batch.
+  Already-processed images are skipped, so an interrupted run resumes.
+- **`tests/test_notebook_parity.groovy`** — checks QuPath and the notebook still measure the
+  same things. Run it after changing any detection or feature code.
+
 ---
 
 ## Environments
@@ -67,6 +74,7 @@ downloaded the CPU build of PyTorch.
 ```
 Mathilde/
 ├── README.md                    this file
+├── .gitignore                   excludes slide data, the corpus, models and project data
 ├── CLAUDE.md                    conventions and traps for anyone (or any agent) editing the code
 ├── SFS/
 │   ├── Image_BAL_#2.vsi         the slide (Olympus VS200)
@@ -77,6 +85,8 @@ Mathilde/
 │   └── scripts/ -> junction to Mathilde Data/qupath_scripts
 └── Mathilde Data/
     ├── qupath_scripts/          ALL QuPath scripts live here (the single source)
+    │   ├── bal_config.groovy    every machine-specific path, in one place
+    │   └── tests/               harnesses -- run these after changing anything
     ├── bal_classify/            the Python classifier and its outputs
     ├── cellpose_ground_truth/   shared training corpus (image/mask pairs), ~8 GB
     ├── cell_segmentation.ipynb  original notebook pipeline

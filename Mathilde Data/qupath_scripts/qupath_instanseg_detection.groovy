@@ -19,9 +19,21 @@ import qupath.ext.instanseg.core.InstanSeg
 import qupath.ext.instanseg.core.InstanSegModel
 import java.nio.file.Paths
 
+// Machine-specific paths come from bal_config.groovy (with bal_config.local.groovy
+// overriding it); the literals below are only a fallback for running this file alone.
+def CFG = [:]
+try {
+    def cfgFile = [new File(System.getProperty("user.home") + "/QuPath/v0.7/scripts", "bal_config.groovy"),
+                   new File("C:/Users/Labsfs/Desktop/Mathilde/Mathilde Data/qupath_scripts", "bal_config.groovy")]
+            .find { it.exists() }
+    if (cfgFile != null) CFG = evaluate(cfgFile) ?: [:]
+} catch (Exception ignored) { }
+
+
 // Overridable from the GUI.
 def MODEL_DIR   = binding.hasVariable('BAL_INSTANSEG_MODEL') ? BAL_INSTANSEG_MODEL :
-        System.getProperty("user.home") + "/QuPath/v0.7/instanseg/downloaded/brightfield_nuclei-0.1.1"
+        (CFG.instansegDir ?: System.getProperty("user.home") + "/QuPath/v0.7/instanseg/downloaded") +
+        "/brightfield_nuclei-0.1.1"
 def OUTPUT_TYPE = binding.hasVariable('BAL_OUTPUT_TYPE')     ? BAL_OUTPUT_TYPE           : 'DETECTION'
 def TARGETS     = binding.hasVariable('BAL_TARGETS')         ? BAL_TARGETS               : 'SELECTED'
 int TILE_SIZE   = binding.hasVariable('BAL_TILE_SIZE')       ? BAL_TILE_SIZE as int      : 512

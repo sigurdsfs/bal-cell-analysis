@@ -26,14 +26,25 @@
 import qupath.ext.biop.cellpose.Cellpose2D
 import qupath.ext.biop.cellpose.CellposeSetup
 
+// Machine-specific paths come from bal_config.groovy (with bal_config.local.groovy
+// overriding it); the literals below are only a fallback for running this file alone.
+def CFG = [:]
+try {
+    def cfgFile = [new File(System.getProperty("user.home") + "/QuPath/v0.7/scripts", "bal_config.groovy"),
+                   new File("C:/Users/Labsfs/Desktop/Mathilde/Mathilde Data/qupath_scripts", "bal_config.groovy")]
+            .find { it.exists() }
+    if (cfgFile != null) CFG = evaluate(cfgFile) ?: [:]
+} catch (Exception ignored) { }
+
+
 // --- one-time env setup -----------------------------------------------------
 // Same as Edit > Preferences > Cellpose/Omnipose in the GUI -- setting it here too
 // means this script is self-contained even on a fresh QuPath user profile.
 // Each Windows account on this PC has its own cellpose_seg env -- use whichever this user can see.
-def cellposePython = [
+def cellposePython = (CFG.pythonCellpose4 ?: [
         'C:/Users/Labsfs/AppData/Local/miniconda3/envs/cellpose_seg/python.exe',
         'C:/Users/lababr/AppData/Local/anaconda3/envs/cellpose_seg/python.exe',
-].find { new File(it).exists() }
+]).find { new File(it).exists() }
 if (cellposePython == null) {
     Dialogs.showErrorMessage("Cellpose", "No cellpose_seg environment found for this Windows user.")
     return
@@ -42,10 +53,10 @@ CellposeSetup.getInstance().setCellposeSAMPythonPath(cellposePython)
 
 // cyto2/cyto3 belong to cellpose 3 and will NOT load in the cellpose 4 environment, so they
 // get their own env and their own path setting in the extension.
-def legacyPython = [
+def legacyPython = (CFG.pythonCellpose3 ?: [
         'C:/Users/Labsfs/AppData/Local/miniconda3/envs/cellpose3/python.exe',
         'C:/Users/lababr/AppData/Local/anaconda3/envs/cellpose3/python.exe',
-].find { new File(it).exists() }
+]).find { new File(it).exists() }
 if (legacyPython != null)
     CellposeSetup.getInstance().setCellposePythonPath(legacyPython)
 
