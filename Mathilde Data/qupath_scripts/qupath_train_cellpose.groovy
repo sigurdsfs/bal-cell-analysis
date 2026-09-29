@@ -249,6 +249,24 @@ if (GT_DIR != null) {
     int nTest = countPairs(new File(GT_DIR, "test"))
     println "Corpus: ${GT_DIR}"
     println "  ${nTrain} training patches, ${nTest} validation patches"
+    // Cellpose trains on every image/mask pair in the folder (verified: 4 pairs -> n_train=4),
+    // so this is the whole training set, gathered from however many slides.
+    def slidesIn = { File d ->
+        (d.exists() ? d.listFiles() : [] ?: []).findAll { it.name.endsWith("_masks.tif") }
+                .groupBy { it.name.replaceAll(/_region_\d+_masks\.tif$/, "") }
+    }
+    def trainSlides = slidesIn(new File(GT_DIR, "train"))
+    def testSlides = slidesIn(new File(GT_DIR, "test"))
+    println "  from ${trainSlides.size()} slide(s) for training, ${testSlides.size()} for validation:"
+    trainSlides.sort { it.key }.each { slide, files -> println "    ${files.size()} patch(es)  ${slide}" }
+    if (trainSlides.size() == 1)
+        println "  NOTE: ground truth from a single slide. Corrections from several slides"
+        println "        generalise far better -- stain and cell appearance vary between them."
+    // A slide used for BOTH training and validation inflates the scores.
+    def overlap = trainSlides.keySet().intersect(testSlides.keySet())
+    if (!overlap.isEmpty())
+        println "  WARNING: ${overlap.size()} slide(s) appear in BOTH train and test " +
+                "(${overlap.take(3).join(', ')}) -- validation scores will look better than they are."
     if (nTrain == 0) {
         Dialogs.showErrorMessage("Cellpose training",
                 "No training patches in:\n${GT_DIR}\n\n" +

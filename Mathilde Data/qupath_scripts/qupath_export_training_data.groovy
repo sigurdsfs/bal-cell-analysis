@@ -64,6 +64,13 @@ if (entry != null) {
     }
 }
 
+// With 39 slides in play, two projects can hold images with the same name, and the
+// extension names patches "<imageName>_region_<n>" -- so they would overwrite each other in
+// a shared corpus. Prefixing with the project name keeps every slide's ground truth separate.
+def PREFIX = binding.hasVariable('BAL_GT_PREFIX') ? BAL_GT_PREFIX.toString().trim() :
+        (getProject() != null ? qupath.lib.projects.Projects.getBaseDirectory(getProject())?.getName() : "")
+def safePrefix = PREFIX ? PREFIX.replaceAll(/[^A-Za-z0-9._-]/, "_") : ""
+
 def before = countPairs(CORPUS)
 
 def builder = Cellpose2D.builder(MODEL)
@@ -79,7 +86,37 @@ def cellpose = builder.build()
 println "Exporting ground truth to ${CORPUS}"
 cellpose.saveTrainingImages()
 
+// Tag this run's patches with the project name, so slides from different projects can never
+// overwrite one another. Deterministic: re-exporting the same project replaces its own files.
+if (safePrefix) {
+    int renamed = 0
+    ["train", "test"].each { sub ->
+        def d = new File(CORPUS, sub)
+        (d.listFiles() ?: []).each { f ->
+            if (f.isFile() && f.name.endsWith(".tif") && !f.name.startsWith(safePrefix + "__")) {
+                def target = new File(d, safePrefix + "__" + f.name)
+                if (target.exists()) target.delete()
+                if (f.renameTo(target)) renamed++
+            }
+        }
+    }
+    if (renamed > 0) println "Tagged ${renamed} file(s) with the project prefix '${safePrefix}__'"
+}
+
 def after = countPairs(CORPUS)
+
+// Per-slide coverage: with many slides it matters which ones are actually represented.
+["train", "test"].each { sub ->
+    def d = new File(CORPUS, sub)
+    def bySlide = (d.listFiles() ?: []).findAll { it.name.endsWith("_masks.tif") }
+            .groupBy { it.name.replaceAll(/_region_\d+_masks\.tif$/, "") }
+    if (!bySlide.isEmpty()) {
+        println ""
+        println "${sub} patches by slide:"
+        bySlide.sort { it.key }.each { slide, files -> println "  ${files.size()}  ${slide}" }
+    }
+}
+
 println ""
 println "=== corpus now holds ==="
 println "  train: ${after.train} image/mask pairs (was ${before.train})"
