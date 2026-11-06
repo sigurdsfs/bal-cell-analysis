@@ -15,6 +15,7 @@
  * Your choices are remembered between runs (stored in QuPath's preferences).
  */
 
+import javafx.application.Platform
 import javafx.geometry.Insets
 import javafx.scene.control.CheckBox
 import javafx.scene.control.ComboBox
@@ -111,6 +112,39 @@ modelBox.getSelectionModel().select(prefs.get("model", "cyto3 cells + InstanSeg 
 def modelDesc = new Label()
 modelDesc.setWrapText(true)
 modelDesc.setStyle("-fx-font-size: 11px; -fx-text-fill: -fx-accent;")
+
+// --- the custom model file ---------------------------------------------------
+// Asked for the moment "Custom Cellpose model..." is picked, not after OK: you should be
+// able to see which model you are about to run, and whether it is a cpsam fine-tune, while
+// the dialog is still open and the other settings can still be changed to match.
+def CUSTOM_MODEL = "Custom Cellpose model..."
+def customModel = null
+def rememberedCustom = prefs.get("customModel", "")
+if (rememberedCustom) {
+    def f = new File(rememberedCustom)
+    if (f.exists()) customModel = f        // gone from disk = treat as not chosen
+}
+// Our training script names cpsam fine-tunes "bal_cpsam_..." / "bal_ft-<cpsam parent>",
+// so the filename is what tells us which cellpose environment the model needs.
+def customIsSam = { customModel != null && customModel.getName().toLowerCase().contains("cpsam") }
+def pickCustomModel = {
+    def start = customModel?.getParentFile()
+    if (start == null || !start.exists()) {
+        def modelsDir = getProject() != null ? new File(buildFilePath(PROJECT_BASE_DIR, "models")) : null
+        start = (modelsDir != null && modelsDir.exists()) ? modelsDir : null
+    }
+    // File pickers live on FileChoosers, not Dialogs. Signature here is
+    // promptForFile(Window, String title, File initialDir, ExtensionFilter...).
+    def filter = new javafx.stage.FileChooser.ExtensionFilter("Cellpose models", "*.cpm", "*")
+    qupath.fx.dialogs.FileChoosers.promptForFile(
+            null, "Choose a fine-tuned Cellpose model", start, filter)
+}
+def modelBrowse = new javafx.scene.control.Button("Browse...")
+def modelRow = new GridPane()
+modelRow.setHgap(6)
+modelRow.add(modelBox, 0, 0)
+modelRow.add(modelBrowse, 1, 0)
+GridPane.setHgrow(modelBox, Priority.ALWAYS)
 
 def outputBox = new ComboBox<String>()
 outputBox.getItems().addAll("Detections", "Annotations", "Cells")
@@ -258,11 +292,17 @@ def syncEnabled = {
     }
 
     def m = MODELS[modelBox.getValue()]
+    boolean isCustom = modelBox.getValue() == CUSTOM_MODEL
+    modelBrowse.setDisable(!isCustom)
+    // A custom model inherits its parent's rules: a cpsam fine-tune is still scale-free and
+    // still needs AdamW at 1e-5. Knowing the file already (it is chosen when the dropdown
+    // changes, not at OK) is what lets the fields below follow it.
+    boolean samModel = (m?.arg == 'cpsam') || (isCustom && customIsSam())
     // Training settings depend on WHICH model: cpsam is a 300M-parameter transformer trained
     // at lr 1e-5 with AdamW; cyto3 is a 6.6M UNet fine-tuned at lr 0.1 with SGD. Mixing them
     // destroys the model, so the fields follow the model choice.
     if (training) {
-        boolean sam = (m?.arg == 'cpsam')
+        boolean sam = samModel
         if (lastTrainModelWasSam == null || lastTrainModelWasSam != sam) {
             lrField.setText(sam ? "0.00001" : "0.1")
             weightDecayField.setText(sam ? "0.1" : "0.0001")
@@ -270,7 +310,6 @@ def syncEnabled = {
             lastTrainModelWasSam = sam
         }
     }
-    boolean samModel = (m?.arg == 'cpsam')
     saveEachCheck.setDisable(!training || !samModel)
     saveEveryField.setDisable(!training || !samModel || !saveEachCheck.isSelected())
     modelDesc.setText(m?.desc ?: "")
@@ -280,8 +319,12 @@ def syncEnabled = {
     // diam_mean/diameter. cpsam is scale-free (cellpose 4 calls --diam_mean deprecated and
     // unused) and InstanSeg has its own resolution, so the field stays off for both -- in
     // every task, including training.
-    boolean usesDiameter = (m?.engine in ['cellpose', 'paired']) && m?.arg != 'cpsam'
+    boolean usesDiameter = (m?.engine in ['cellpose', 'paired']) && !samModel
     diameterField.setDisable(!usesDiameter)
+    if (isCustom)
+        modelDesc.setText((m?.desc ?: "") + "\n\n" + (customModel != null
+                ? "Using: ${customModel.getName()}\nRuns in ${customIsSam() ? 'cellpose 4 (cpsam): scale-free, so cell diameter is off' : 'cellpose 3 (cyto-style): cell diameter applies'}"
+                : "No model file chosen yet -- click Browse..."))
     if (isInstanSeg && m.arg != null && !new File(m.arg.toString()).exists())
         modelDesc.setText(m.desc + "\n\nNOT FOUND on disk - download it via Extensions > InstanSeg.")
     // Training only works on Cellpose models: InstanSeg fine-tuning isn't supported from QuPath,
@@ -290,8 +333,32 @@ def syncEnabled = {
         modelDesc.setText((m?.desc ?: "") + "\n\nThis task needs a plain Cellpose model " +
                 "(cyto3, cyto2, cpsam or a custom one).")
 }
+def chooseCustomModel = {
+    def f = pickCustomModel()
+    if (f != null) {
+        customModel = f
+        prefs.put("customModel", f.getAbsolutePath())
+    }
+    syncEnabled()
+    f
+}
+modelBrowse.setOnAction({ chooseCustomModel() } as javafx.event.EventHandler)
+
 taskBox.valueProperty().addListener({ a, b, c -> syncEnabled() } as javafx.beans.value.ChangeListener)
-modelBox.valueProperty().addListener({ a, b, c -> syncEnabled() } as javafx.beans.value.ChangeListener)
+modelBox.valueProperty().addListener({ obs, oldModel, newModel ->
+    if (newModel == CUSTOM_MODEL) {
+        // runLater, not inline: the dropdown's popup is still closing, and opening a modal
+        // file chooser underneath it leaves the dialog unresponsive.
+        Platform.runLater {
+            if (chooseCustomModel() == null && customModel == null) {
+                // Cancelled with nothing chosen -- go back rather than leave the dialog
+                // pointing at a model that does not exist.
+                modelBox.getSelectionModel().select(oldModel)
+            }
+        }
+    }
+    syncEnabled()
+} as javafx.beans.value.ChangeListener)
 outputBox.valueProperty().addListener({ a, b, c -> syncEnabled() } as javafx.beans.value.ChangeListener)
 featuresCheck.selectedProperty().addListener({ a, b, c -> syncEnabled() } as javafx.beans.value.ChangeListener)
 clumpCheck.selectedProperty().addListener({ a, b, c -> syncEnabled() } as javafx.beans.value.ChangeListener)
@@ -308,7 +375,7 @@ def addRow = { String label, javafx.scene.Node node ->
 addRow("Task:", taskBox)
 pane.add(taskDesc, 1, row++)
 pane.add(new Separator(), 0, row++, 2, 1)
-addRow("Model:", modelBox)
+addRow("Model:", modelRow)
 pane.add(modelDesc, 1, row++)
 addRow("Output type:", outputBox)
 addRow("Run on:", regionBox)
@@ -429,19 +496,20 @@ if (!task.startsWith("Classify cells") && task != "Segment cells" && chosen.engi
 }
 def modelArg = chosen.arg
 if (chosen.engine == 'cellpose' && modelArg == null) {
-    // File pickers live on FileChoosers, not Dialogs. Signature here is
-    // promptForFile(Window, String title, File initialDir, ExtensionFilter...).
-    def modelsDir = getProject() != null ? new File(buildFilePath(PROJECT_BASE_DIR, "models")) : null
-    def filter = new javafx.stage.FileChooser.ExtensionFilter("Cellpose models", "*.cpm", "*")
-    def f = qupath.fx.dialogs.FileChoosers.promptForFile(
-            null, "Choose a fine-tuned Cellpose model",
-            (modelsDir != null && modelsDir.exists()) ? modelsDir : null, filter)
-    if (f == null) { println "Cancelled -- no model chosen."; return }
-    modelArg = f.getAbsolutePath()
+    // The file was chosen when the dropdown changed, so by here it should already be known.
+    // Re-check it exists: it may have been deleted or renamed since, or come from prefs.
+    if (customModel == null || !customModel.exists()) {
+        Dialogs.showErrorMessage("BAL segmentation", customModel == null
+                ? "No custom model file is chosen.\n\nClick Browse... next to the Model list."
+                : "That custom model is no longer on disk:\n${customModel.getAbsolutePath()}\n\n" +
+                  "Click Browse... next to the Model list and pick it again.")
+        return
+    }
+    modelArg = customModel.getAbsolutePath()
     // Models fine-tuned from cpsam must run in the cellpose 4 environment; the name carries
     // that, since our training script writes "bal_cpsam_..." or "bal_ft-<cpsam parent>".
-    BAL_MODEL_IS_SAM = f.getName().toLowerCase().contains("cpsam")
-    println "Custom model: ${f.getName()} -> treating as ${BAL_MODEL_IS_SAM ? 'cellpose 4 (cpsam)' : 'cellpose 3 (cyto-style)'}"
+    BAL_MODEL_IS_SAM = customIsSam()
+    println "Custom model: ${customModel.getName()} -> treating as ${BAL_MODEL_IS_SAM ? 'cellpose 4 (cpsam)' : 'cellpose 3 (cyto-style)'}"
 } else if (chosen.engine == 'instanseg' && !new File(modelArg.toString()).exists()) {
     Dialogs.showErrorMessage("BAL segmentation",
             "That InstanSeg model isn't downloaded:\n${modelArg}\n\nGet it via Extensions > InstanSeg.")
@@ -521,7 +589,10 @@ if (task.startsWith("Classify cells")) {
 // --- the two training tasks leave early; segmentation continues below ---------
 if (task != "Segment cells") {
     BAL_MODEL = modelArg
-    BAL_DIAMETER = modelArg == 'cpsam' ? 0 : (diameterField.getText().trim() as double)
+    // A cpsam fine-tune is as scale-free as stock cpsam, so it gets 0 too -- the dropdown
+    // entry alone cannot tell us that, the chosen filename can.
+    boolean samHere = (modelArg == 'cpsam') || (chosen.arg == null && customIsSam())
+    BAL_DIAMETER = samHere ? 0 : (diameterField.getText().trim() as double)
     // Don't clobber the flag a custom model's filename already set above.
     if (chosen.arg != null) BAL_MODEL_IS_SAM = (modelArg == 'cpsam')
 

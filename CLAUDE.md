@@ -38,6 +38,7 @@ The harnesses live in `Mathilde Data/qupath_scripts/tests/`. Run with:
 | `test_gui_all.groovy` | **runs** the dialog's setup + `syncEnabled()` for all 7 tasks x 5 models |
 | `test_bounds.groovy` | every value the dialog writes into a field passes its own validation |
 | `test_api_calls.groovy` | every `Dialogs.*` / `FileChoosers.*` call actually exists |
+| `test_custom_model.groovy` | a custom model is known at *selection* time: diameter, training defaults, Browse |
 | `test_prune2.groovy` | checkpoint pruning, including the log being wiped mid-run |
 | `test_summary2.groovy` | training-loss verdicts against synthetic curves |
 | `test_corpus_multislide.groovy` | corpus prefixing, per-slide counts, train/test overlap |
@@ -56,6 +57,9 @@ with `CFG.key ?: <literal fallback>` so the script still runs standalone. A mach
 - **Cellpose training and ground-truth export** — `saveTrainingImages()` calls
   `QPEx.getQuPath().getProject()`, null on the CLI. GUI only.
 - **The dialog's visual layout**, and anything after the OK button in a real session.
+- **Any file chooser actually opening** — so the custom-model picker firing when the model
+  dropdown changes, and the dropdown reverting when you cancel it, are GUI-only.
+  `test_custom_model.groovy` covers the state either outcome leaves behind, not the click.
 - Always say so when handing over.
 
 ---
