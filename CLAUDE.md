@@ -39,6 +39,7 @@ The harnesses live in `Mathilde Data/qupath_scripts/tests/`. Run with:
 | `test_bounds.groovy` | every value the dialog writes into a field passes its own validation |
 | `test_api_calls.groovy` | every `Dialogs.*` / `FileChoosers.*` call actually exists |
 | `test_custom_model.groovy` | a custom model is known at *selection* time: diameter, training defaults, Browse |
+| `test_config_block.groovy` | every script that reads `CFG` declares it **in its own body**, before use |
 | `test_prune2.groovy` | checkpoint pruning, including the log being wiped mid-run |
 | `test_summary2.groovy` | training-loss verdicts against synthetic curves |
 | `test_corpus_multislide.groovy` | corpus prefixing, per-slide counts, train/test overlap |
@@ -110,6 +111,14 @@ Standalone helpers: `qupath_test_region.groovy` (benchmark regions),
 - **Scripts reach QuPath via directory junctions** (`mklink /J`). Never publish with
   hard links: Edit/Write replace the inode and the menu copy silently goes stale.
 - **Script files are CRLF.** Splitting source on `"\n\n"` fails; anchor on text.
+- **The `def CFG` inside a `PRE` string declares nothing in the script holding it.** That
+  copy is prepended to the SUB-scripts it evaluates. A worker that reads `CFG` needs its own
+  block too, above the first use — `qupath_classify_cells.groovy` shipped without one and
+  died with `No such property: CFG` the first time anyone ran a classify task.
+  `test_config_block.groovy` guards this now.
+- **In Groovy, `replaceAll(pattern) { it }` passes the WHOLE match** when the pattern has no
+  capture groups, so `it[0]` is its first *character*, not the match. In a line-preserving
+  comment stripper that silently shifts every reported line number.
 
 ### Cellpose extension
 

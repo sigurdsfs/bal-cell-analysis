@@ -30,6 +30,18 @@ def CLASSIFIER = binding.hasVariable('BAL_CLASSIFIER') && BAL_CLASSIFIER?.toStri
 // cells haven't changed since it was written.
 boolean REUSE = binding.hasVariable('BAL_REUSE_EMBEDDINGS') ? BAL_REUSE_EMBEDDINGS as boolean : false
 
+// Machine-specific paths come from bal_config.groovy (with bal_config.local.groovy
+// overriding it); the literals below are only a fallback for running this file alone.
+// This block is for THIS script. The one inside PRE further down is a separate copy,
+// prepended to the sub-scripts this one evaluates -- it does not define CFG here.
+def CFG = [:]
+try {
+    def cfgFile = [new File(System.getProperty("user.home") + "/QuPath/v0.7/scripts", "bal_config.groovy"),
+                   new File("C:/Users/Labsfs/Desktop/Mathilde/Mathilde Data/qupath_scripts", "bal_config.groovy")]
+            .find { it.exists() }
+    if (cfgFile != null) CFG = evaluate(cfgFile) ?: [:]
+} catch (Exception ignored) { }
+
 def BAL_DIR = new File(CFG.balClassifyDir ?: "C:/Users/Labsfs/Desktop/Mathilde/Mathilde Data/bal_classify")
 def python = (CFG.pythonCellpose4 ?: [
         'C:/Users/Labsfs/AppData/Local/miniconda3/envs/cellpose_seg/python.exe',
