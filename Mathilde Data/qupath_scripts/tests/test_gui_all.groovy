@@ -6,7 +6,8 @@ import java.util.concurrent.CountDownLatch
 def F = new File("C:/Users/Labsfs/Desktop/Mathilde/Mathilde Data/qupath_scripts/qupath_bal_gui.groovy")
 def stubbed = F.text.replace(".showAndWait()", ".with { Optional.empty() }")
 def prefs = Preferences.userRoot().node("bal_segmentation")
-def tasks = ["Segment cells", "Pair soma + nuclei into cells", "Prepare training regions",
+def tasks = ["Segment cells", "Pair soma + nuclei into cells",
+             "Convert selected objects (annotation <-> detection)", "Prepare training regions",
              "Export corrections to training corpus", "Train model on corrected regions",
              "Classify cells: explore (no labels yet)", "Classify cells: train classifier",
              "Classify cells: predict", "Export labelled cells (segmentation + classifier)"]

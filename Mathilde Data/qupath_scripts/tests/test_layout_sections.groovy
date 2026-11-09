@@ -54,6 +54,8 @@ def EXPECTED = [
         ["Segmentation", "Resolution and tiling", "Measurements"],
     "Pair soma + nuclei into cells":
         ["Measurements"],
+    "Convert selected objects (annotation <-> detection)":
+        ["Convert objects"],
     "Prepare training regions":
         ["Training regions"],
     "Train model on corrected regions":

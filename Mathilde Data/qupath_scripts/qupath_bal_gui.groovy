@@ -197,6 +197,7 @@ def taskBox = new ComboBox<String>()
 taskBox.getItems().addAll(
         "Segment cells",
         "Pair soma + nuclei into cells",
+        "Convert selected objects (annotation <-> detection)",
         "Prepare training regions",
         "Export corrections to training corpus",
         "Train model on corrected regions",
@@ -231,6 +232,23 @@ sgdCheck.setSelected(prefs.getBoolean("sgd", true))
 def defaultCorpus = "C:/Users/Labsfs/Desktop/Mathilde/Mathilde Data/cellpose_ground_truth"
 def corpusField = new TextField(prefs.get("corpus", ""))
 corpusField.setPromptText("empty = this project only; set a folder to pool slides")
+// --- conversion-only fields ---
+// Annotations are the editable type and detections the classifiable one, so moving between
+// them is a step in its own right rather than something to re-segment for.
+def convertToBox = new ComboBox<String>()
+convertToBox.getItems().addAll("Annotations (editable)", "Detections (classifiable)")
+convertToBox.getSelectionModel().select(prefs.get("convertTo", "Annotations (editable)"))
+def convertScopeBox = new ComboBox<String>()
+convertScopeBox.getItems().addAll("Selected objects", "Every object in the image")
+convertScopeBox.getSelectionModel().select(prefs.get("convertScope", "Selected objects"))
+def convertNucleiCheck = new CheckBox("Cells: keep each nucleus as its own 'Nucleus' annotation")
+convertNucleiCheck.setSelected(prefs.getBoolean("convertNuclei", true))
+def convertCellsCheck = new CheckBox("Include cell objects -- DISCARDS their nucleus outline")
+convertCellsCheck.setSelected(prefs.getBoolean("convertCells", false))
+def convertDesc = new Label()
+convertDesc.setWrapText(true)
+convertDesc.setStyle("-fx-font-size: 11px;")
+
 def clustersField = new TextField(prefs.get("clusters", "5"))
 def classifierField = new TextField(prefs.get("classifier", ""))
 classifierField.setPromptText("empty = bal_classify/classifier.joblib")
@@ -289,6 +307,7 @@ def syncEnabled = {
     boolean clsPredict = task.endsWith("predict")
     boolean exportLabels = task.startsWith("Export labelled cells")
     boolean pairing = task == "Pair soma + nuclei into cells"
+    boolean converting = task.startsWith("Convert selected objects")
 
     taskDesc.setText(
         segmenting ? "Segment cells in the selected region(s) and measure them." :
@@ -317,6 +336,11 @@ def syncEnabled = {
     if (clsPredict)
         taskDesc.setText("Apply a saved classifier to every cell in this image. Predictions come\n" +
                          "back as classifications you can correct, then retrain.")
+    if (converting)
+        taskDesc.setText("Turn the selected objects into the other type, in place. Only annotations\n" +
+                         "can be reshaped with the brush, and only detections/cells are classified,\n" +
+                         "so this is how you move between correcting and classifying. Class, name,\n" +
+                         "measurements and object ID all survive.")
 
     // segmentation-only
     [outputBox, regionBox, featuresCheck, clumpCheck, tileField].each { it.setDisable(!segmenting) }
@@ -351,13 +375,28 @@ def syncEnabled = {
     targetBox.setDisable(!(training || exportLabels))
     corpusField.setDisable(!(exporting || training || exportLabels))
     corpusBrowse.setDisable(!(exporting || training || exportLabels))
+    // conversion-only
+    boolean toAnnotations = convertToBox.getValue().startsWith("Annotations")
+    convertToBox.setDisable(!converting)
+    convertScopeBox.setDisable(!converting)
+    // Each cell option belongs to one direction only: a nucleus can be SPLIT OUT into an
+    // annotation, but there is nowhere to put it in a plain detection.
+    convertNucleiCheck.setDisable(!converting || !toAnnotations)
+    convertCellsCheck.setDisable(!converting || toAnnotations)
+    convertDesc.setText(!converting ? "" : toAnnotations
+            ? "Editable outlines you can fix with the Brush (B) or Wand (W). Training and\n" +
+              "Validation rectangles are never converted. Save (Ctrl+S) before exporting or\n" +
+              "training -- both read the SAVED data."
+            : "Classifiable objects. The classifier takes CELL objects if the image has any,\n" +
+              "otherwise every detection -- so avoid leaving a mix, or the plain detections\n" +
+              "are silently skipped.")
     clustersField.setDisable(!clsExplore)
     classifierField.setDisable(!(clsTrain || clsPredict)); classifierBrowse.setDisable(!(clsTrain || clsPredict))
     reuseCheck.setDisable(!classifying)
     // Classification works on whatever cells already exist, so the segmentation model and
     // its settings are irrelevant here. The model row itself is switched off at the END of
     // this closure: the model-description lines below would overwrite the explanation.
-    if (classifying || exportLabels) {
+    if (classifying || exportLabels || converting) {
         [outputBox, regionBox, featuresCheck, clumpCheck, tileField, expansionField, clumpField,
          pixelField, diameterField].each { it.setDisable(true) }
     }
@@ -402,18 +441,22 @@ def syncEnabled = {
     groupRelevant["Segmentation"] = segmenting
     groupRelevant["Resolution and tiling"] = segmenting
     groupRelevant["Measurements"] = segmenting || pairing
+    groupRelevant["Convert objects"] = converting
     groupRelevant["Training regions"] = preparing
     groupRelevant["Fine-tuning"] = training
     groupRelevant["Ground truth"] = training || exporting || exportLabels
     groupRelevant["Classification"] = classifying
 
-    modelBox.setDisable(classifying || exportLabels)
-    if (classifying || exportLabels) {
+    modelBox.setDisable(classifying || exportLabels || converting)
+    if (classifying || exportLabels || converting) {
         modelBrowse.setDisable(true)
-        modelDesc.setText("Works on the cells already in the image -- no segmentation model is\n" +
-                          "used here. It takes the CELL objects if there are any, otherwise every\n" +
-                          "detection. Annotations are never included, and there is no way to\n" +
-                          "restrict it to a selection.")
+        modelDesc.setText(converting
+                ? "Nothing is segmented here. The objects already exist and only change\n" +
+                  "type, keeping their outline, class and measurements exactly as they are."
+                : "Works on the cells already in the image -- no segmentation model is\n" +
+                  "used here. It takes the CELL objects if there are any, otherwise every\n" +
+                  "detection. Annotations are never included, and there is no way to\n" +
+                  "restrict it to a selection.")
     }
 }
 def chooseCustomModel = {
@@ -475,6 +518,8 @@ modelBox.valueProperty().addListener({ obs, oldModel, newModel ->
     syncEnabled()
 } as javafx.beans.value.ChangeListener)
 outputBox.valueProperty().addListener({ a, b, c -> syncEnabled() } as javafx.beans.value.ChangeListener)
+// The direction decides which of the two cell options applies, so it has to re-sync.
+convertToBox.valueProperty().addListener({ a, b, c -> syncEnabled() } as javafx.beans.value.ChangeListener)
 featuresCheck.selectedProperty().addListener({ a, b, c -> syncEnabled() } as javafx.beans.value.ChangeListener)
 clumpCheck.selectedProperty().addListener({ a, b, c -> syncEnabled() } as javafx.beans.value.ChangeListener)
 syncEnabled()
@@ -543,6 +588,13 @@ clumpRow.add(clumpField, 1, 0)
 clumpRow.add(new Label("um2"), 2, 0)
 wideTo(measGrid, clumpRow)
 
+def convGrid = newGrid()
+addTo(convGrid, "Convert to:", convertToBox)
+rightTo(convGrid, convertDesc)
+addTo(convGrid, "Apply to:", convertScopeBox)
+rightTo(convGrid, convertNucleiCheck)
+rightTo(convGrid, convertCellsCheck)
+
 def regionsGrid = newGrid()
 addTo(regionsGrid, "Training regions (x,y; ...):", trainRegionsField)
 addTo(regionsGrid, "Validation regions (x,y; ...):", valRegionsField)
@@ -573,6 +625,7 @@ box.getChildren().addAll(
         section("Segmentation", segGrid),
         section("Resolution and tiling", resGrid),
         section("Measurements", measGrid),
+        section("Convert objects", convGrid),
         section("Training regions", regionsGrid),
         section("Fine-tuning", trainGrid),
         section("Ground truth", gtGrid),
@@ -724,6 +777,9 @@ prefs.put("trainSize", trainSizeField.getText())
 prefs.put("epochs", epochsField.getText()); prefs.put("lr", lrField.getText())
 prefs.put("weightDecay", weightDecayField.getText()); prefs.putBoolean("sgd", sgdCheck.isSelected())
 prefs.putBoolean("saveEach", saveEachCheck.isSelected()); prefs.put("saveEvery", saveEveryField.getText())
+prefs.put("convertTo", convertToBox.getValue()); prefs.put("convertScope", convertScopeBox.getValue())
+prefs.putBoolean("convertNuclei", convertNucleiCheck.isSelected())
+prefs.putBoolean("convertCells", convertCellsCheck.isSelected())
 prefs.put("clusters", clustersField.getText()); prefs.put("classifier", classifierField.getText())
 prefs.putBoolean("reuseEmb", reuseCheck.isSelected())
 prefs.put("corpus", corpusField.getText())
@@ -755,6 +811,19 @@ import qupath.lib.measurements.*
 """
 
 long t0 = System.currentTimeMillis()
+
+// --- change the type of objects that already exist ---------------------------
+if (task.startsWith("Convert selected objects")) {
+    BAL_CONVERT_TO = convertToBox.getValue().startsWith("Annotations") ? 'ANNOTATION' : 'DETECTION'
+    BAL_CONVERT_SCOPE = convertScopeBox.getValue().startsWith("Selected") ? 'SELECTED' : 'ALL'
+    BAL_CONVERT_SPLIT_NUCLEI = convertNucleiCheck.isSelected()
+    BAL_CONVERT_CELLS = convertCellsCheck.isSelected()
+    println "=== ${task}: to ${BAL_CONVERT_TO}, ${convertScopeBox.getValue().toLowerCase()} ==="
+    evaluate(PRE + new File(scriptDir, "qupath_convert_objects.groovy").text)
+    def secs = (System.currentTimeMillis() - t0) / 1000.0
+    println "=== finished in ${secs}s ==="
+    return
+}
 
 // --- export hand-labelled cells for both pipelines ---------------------------
 if (task.startsWith("Export labelled cells")) {

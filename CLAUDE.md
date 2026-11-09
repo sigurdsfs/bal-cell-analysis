@@ -43,6 +43,7 @@ The harnesses live in `Mathilde Data/qupath_scripts/tests/`. Run with:
 | `test_pre_combination.groovy` | every `PRE` + worker pair compiles **as one script**, which is how it runs |
 | `test_nucleus_pass.groovy` | the nucleus pass, and that `Output type = Cells` needs it |
 | `test_layout_sections.groovy` | each task opens exactly the collapsible sections it uses |
+| `test_convert_objects.groovy` | annotation ⇄ detection: class, name, measurements, **ID**, nesting, nucleus split (builds its own image — needs no project) |
 | `test_export_labels.groovy` | classified cells stay in the masks; soma and nucleus corpora stay separate (needs a project) |
 | `test_prune2.groovy` | checkpoint pruning, including the log being wiped mid-run |
 | `test_summary2.groovy` | training-loss verdicts against synthetic curves |
@@ -84,6 +85,7 @@ qupath_bal_gui.groovy
 ├── qupath_prepare_training.groovy      Training/Validation rectangles
 ├── qupath_export_training_data.groovy  adds corrections to the shared corpus
 ├── qupath_train_cellpose.groovy        fine-tuning (+ checkpoint pruning)
+├── qupath_convert_objects.groovy       annotation <-> detection, in place
 ├── qupath_classify_cells.groovy        drives the Python classifier
 ├── qupath_export_labels.groovy         labelled cells -> masks AND per-class crops
 └── qupath_batch_slides.groovy          the whole pipeline over every image in a project
@@ -133,6 +135,15 @@ files parsed fine on their own. `test_pre_combination.groovy` compiles every pai
 - **In Groovy, `replaceAll(pattern) { it }` passes the WHOLE match** when the pattern has no
   capture groups, so `it[0]` is its first *character*, not the match. In a line-preserving
   comment stripper that silently shifts every reported line number.
+- **Replacing an object is `hierarchy.insertPathObjects(...)`, never `addObjects(...)`.**
+  `addObjects` hangs everything off the ROOT, so objects rebuilt inside a tissue annotation
+  jump out of it; `insert` places each one under whatever contains it. Remove the originals
+  with `removeObjects(objs, true)` — `keepChildren` false silently takes their children too.
+- **Carry the object ID across a rebuild** (`out.setID(src.getID())`, which QuPath's own
+  `transformObject` does). `bal_classify/predictions.csv` is joined back onto cells BY ID, so
+  a new UUID orphans every prediction. `PathObjectTools.createLike` does *not* keep it.
+- **Never copy `isLocked()` onto a new annotation.** A locked annotation ignores the brush
+  with no message at all, which defeats the only reason to make one.
 
 ### Cellpose extension
 

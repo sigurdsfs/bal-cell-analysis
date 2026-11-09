@@ -31,11 +31,13 @@ Everything is reachable from **one entry point**: `qupath_bal_gui.groovy`.
    If the menu is empty, restart QuPath; the scripts folder is a junction (see below).
 3. Draw a rectangle, select it, and run **Segment cells**.
 
-### The seven tasks
+### The tasks
 
 | Task | What it does |
 |---|---|
 | **Segment cells** | Runs the chosen model on the selected region(s) and measures each cell |
+| **Pair soma + nuclei into cells** | Turns outlines already in the image into cell objects: anything not a region rectangle is a soma, a `Nucleus` annotation inside it becomes its nucleus |
+| **Convert selected objects** | Annotation ⇄ detection in place. Annotations are the only editable type, detections the only classifiable one, and class, measurements and object ID all survive the trip |
 | **Prepare training regions** | Creates Training/Validation rectangles with editable outlines to correct |
 | **Export corrections to training corpus** | Adds this project's corrected regions to a shared ground-truth folder |
 | **Train model on corrected regions** | Fine-tunes Cellpose on that ground truth |
