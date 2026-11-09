@@ -339,8 +339,9 @@ def syncEnabled = {
     if (classifying || exportLabels) {
         modelBrowse.setDisable(true)
         modelDesc.setText("Works on the cells already in the image -- no segmentation model is\n" +
-                          "used here. Segment first if the image has no cells yet.\n" +
-                          "Every cell in the image is included; there is no per-region selection.")
+                          "used here. It takes the CELL objects if there are any, otherwise every\n" +
+                          "detection. Annotations are never included, and there is no way to\n" +
+                          "restrict it to a selection.")
     }
 }
 def chooseCustomModel = {
