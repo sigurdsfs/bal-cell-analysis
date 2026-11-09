@@ -48,7 +48,18 @@ def CLASSIFY_DIR = new File(CFG.balClassifyDir ?: "C:/Users/Labsfs/Desktop/Mathi
 double PIXEL_SIZE_UM = binding.hasVariable('BAL_PIXEL_SIZE_UM') ? BAL_PIXEL_SIZE_UM as double : (CFG.pixelSizeUm ?: 0.137)
 // Crop size around each labelled cell, in pixels at full resolution. 128 px = 17.5 um here,
 // enough context for the transformer to see the cell and its neighbours.
-int CROP = binding.hasVariable('BAL_CROP_PX') ? BAL_CROP_PX as int : 128
+int CROP = binding.hasVariable('BAL_CROP_PX') ? BAL_CROP_PX as int : (CFG.cropPx ?: 128)
+// How the crop is cleaned up. See bal_crops.groovy: a 128 px window in a crowded smear
+// contains the neighbouring cells, and the transformer embeds the whole window.
+def CROP_STYLE = binding.hasVariable('BAL_CROP_STYLE') ? BAL_CROP_STYLE.toString()
+        : (CFG.cropStyle ?: 'NEIGHBOURS_OUT')
+
+def scriptDir = null
+def scriptPath = (binding.hasVariable("qupath.script.file") ? binding.getVariable("qupath.script.file") : null) ?:
+        System.getProperty("qupath.script.file")
+if (scriptPath) scriptDir = new File(scriptPath.toString()).getParentFile()
+if (scriptDir == null || !new File(scriptDir, "bal_crops.groovy").exists())
+    scriptDir = new File(System.getProperty("user.home"), "QuPath/v0.7/scripts")
 // Classes that are not cell types and must not become classifier training data.
 def NON_CELL_CLASSES = ["Training", "Validation", "Clump/debris", "Uncertain"] as Set
 
@@ -100,9 +111,18 @@ def labelServer = new LabeledImageServer.Builder(imageData)
 double downsample = PIXEL_SIZE_UM / server.getPixelCalibration().getAveragedPixelSizeMicrons()
 if (!(downsample > 0)) downsample = 1.0
 
-int segWritten = 0, cropsWritten = 0
+int segWritten = 0, cropsWritten = 0, paintedTotal = 0
 def classCounts = [:].withDefault { 0 }
 def labelRows = []
+
+// The crop maker, built once. Its neighbour list must be EVERY segmented cell, not just
+// the labelled ones: a macrophage beside an unlabelled lymphocyte has the same problem.
+def cropper = null
+if (WHAT in ['BOTH', 'CLASSIFIER'] && TARGET != 'NUCLEI') {
+    def cropsLib = evaluate(new File(scriptDir, "bal_crops.groovy"))
+    def cropCandidates = getAnnotationObjects().findAll { isTargetObject(it) } + getDetectionObjects()
+    cropper = cropsLib.newCropper(server, cropCandidates, CROP, CROP_STYLE)
+}
 
 regions.eachWithIndex { region, idx ->
     def roi = region.getROI()
@@ -139,15 +159,16 @@ regions.eachWithIndex { region, idx ->
             def outDir = new File(new File(CLASSIFY_DIR, "crops"), safeCls)
             outDir.mkdirs()
             def cx = cell.getROI().getCentroidX(), cy = cell.getROI().getCentroidY()
-            def cropRoi = ROIs.createRectangleROI(cx - CROP / 2, cy - CROP / 2, CROP, CROP,
-                    cell.getROI().getImagePlane())
-            def cropReq = RegionRequest.createInstance(server.getPath(), 1.0, cropRoi)
             def name = "${tag}_${cell.getID().toString().take(8)}.png"
             try {
-                ImageWriterTools.writeImageRegion(server, cropReq, new File(outDir, name).getAbsolutePath())
+                // Shared with qupath_export_cells.groovy, which cuts the crops the
+                // classifier is later APPLIED to. Same code, same style, or the model is
+                // trained on one kind of picture and used on another.
+                def r = cropper.write(cell, new File(outDir, name))
                 cropsWritten++
+                paintedTotal += r.painted
                 classCounts[cls]++
-                labelRows << "\"${name}\",\"${cls}\",\"${imageName}\",${Math.round(cx)},${Math.round(cy)}"
+                labelRows << "\"${name}\",\"${cls}\",\"${imageName}\",\"${CROP_STYLE}\",${Math.round(cx)},${Math.round(cy)}"
             } catch (Exception e) {
                 println "  (skipped a crop at ${(int) cx},${(int) cy}: ${e.getMessage()})"
             }
@@ -158,11 +179,28 @@ regions.eachWithIndex { region, idx ->
 // --- classifier label index ------------------------------------------------------
 if (WHAT in ['BOTH', 'CLASSIFIER'] && cropsWritten > 0) {
     def csv = new File(CLASSIFY_DIR, "labels.csv")
+    def COLS = ["crop", "class", "image", "crop_style", "x", "y"]
     // Append, so labels gathered from many slides accumulate. Same crop name overwrites.
-    def existing = csv.exists() ? csv.readLines().drop(1).findAll { line ->
-        !labelRows.any { row -> line.startsWith(row.split(",")[0]) }
-    } : []
-    csv.text = "crop,class,image,x,y\n" + (existing + labelRows).join("\n") + "\n"
+    def oldLines = csv.exists() ? csv.readLines() : []
+    def oldCols = oldLines ? oldLines[0].split(",").collect { it.trim() } : COLS
+    def existing = oldLines.drop(1).findAll { line ->
+        line.trim() && !labelRows.any { row -> line.startsWith(row.split(",")[0]) }
+    }.collect { line ->
+        // A file written before crop_style existed has FEWER columns. Writing the new
+        // header over those rows would shift every field one to the left -- the x
+        // coordinate would be read as the crop style. So map each old row by name and
+        // re-emit it in the new order.
+        if (oldCols == COLS) return line
+        def vals = line.split(",")
+        def byName = [:]
+        oldCols.eachWithIndex { c, i -> byName[c] = i < vals.length ? vals[i] : "" }
+        COLS.collect { byName.containsKey(it) ? byName[it] : '"unknown"' }.join(",")
+    }
+    csv.text = COLS.join(",") + "\n" + (existing + labelRows).join("\n") + "\n"
+    // The corpus is read from the FOLDER, not this CSV, so the style has to be recorded
+    // there too -- otherwise a classifier can be trained on crops made two different ways
+    // with nothing to notice it.
+    new File(new File(CLASSIFY_DIR, "crops"), "crop_style.txt").text = CROP_STYLE + "\n"
     println ""
     println "labels.csv now holds ${(existing + labelRows).size()} labelled cell(s) across all slides"
 }
@@ -173,6 +211,8 @@ if (WHAT in ['BOTH', 'SEGMENTATION'])
     println "  segmentation: ${segWritten} ${TARGET.toLowerCase()} region(s) written to ${CORPUS_ROOT}"
 if (WHAT in ['BOTH', 'CLASSIFIER']) {
     println "  classifier:   ${cropsWritten} crop(s) written to ${new File(CLASSIFY_DIR, 'crops')}"
+    println "                crop style ${CROP_STYLE}" + (CROP_STYLE == 'NEIGHBOURS_OUT'
+            ? ", ${paintedTotal} neighbouring cell(s) painted out" : "")
     classCounts.sort { -it.value }.each { cls, n -> println "      ${n}  ${cls}" }
     if (classCounts.isEmpty())
         println "      none -- no cells carry a cell-type class yet"

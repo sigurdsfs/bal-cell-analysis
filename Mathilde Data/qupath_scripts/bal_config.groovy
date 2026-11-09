@@ -38,6 +38,21 @@ def cfg = [
     pixelSizeUm     : 0.137,
     // Median cell diameter measured on this slide; cyto2/cyto3 need it, cpsam ignores it.
     cellDiameterPx  : 58,
+
+    // --- Classifier crops ------------------------------------------------------
+    // The window the transformer sees around each cell, in full-resolution pixels.
+    // 128 px = 17.5 um: the cell plus a little of its surroundings.
+    cropPx          : 128,
+    // How that window is cleaned up before embedding. See bal_crops.groovy.
+    //   NEIGHBOURS_OUT  paint the OTHER segmented cells out with the local background --
+    //                   the default, because a crowded smear otherwise puts a lymphocyte
+    //                   in its macrophage neighbour's embedding
+    //   CELL_ONLY       paint everything outside the cell (no context at all)
+    //   CONTEXT         raw window, neighbours included (what we did before)
+    // CHANGING THIS INVALIDATES A SAVED CLASSIFIER. The style is recorded in the manifest
+    // and in the saved model, and predicting with a mismatch is refused rather than
+    // silently scored on the wrong kind of picture -- re-export and retrain after a change.
+    cropStyle       : "NEIGHBOURS_OUT",
 ]
 
 // A per-machine override file, git-ignored. Only the keys it sets are replaced.

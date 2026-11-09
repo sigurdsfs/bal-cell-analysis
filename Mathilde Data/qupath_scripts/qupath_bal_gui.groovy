@@ -203,6 +203,7 @@ taskBox.getItems().addAll(
         "Train model on corrected regions",
         "Classify cells: explore (no labels yet)",
         "Classify cells: train classifier",
+        "Classify cells: train on labelled corpus (all slides)",
         "Classify cells: predict",
         "Export labelled cells (segmentation + classifier)")
 taskBox.getSelectionModel().select(prefs.get("task", "Segment cells"))
@@ -267,6 +268,10 @@ classifierRow.add(classifierBrowse, 1, 0)
 GridPane.setHgrow(classifierField, Priority.ALWAYS)
 def reuseCheck = new CheckBox("Reuse existing embeddings (skip the transformer; only if cells are unchanged)")
 reuseCheck.setSelected(prefs.getBoolean("reuseEmb", false))
+// Off by default and deliberately blunt: predicting a cell you labelled by hand replaces
+// your label with a guess, and afterwards nothing tells them apart.
+def overwriteCheck = new CheckBox("Re-predict cells I classified by hand (REPLACES those labels)")
+overwriteCheck.setSelected(false)
 
 def corpusBrowse = new javafx.scene.control.Button("Browse...")
 corpusBrowse.setOnAction({
@@ -304,6 +309,7 @@ def syncEnabled = {
     boolean classifying = task.startsWith("Classify cells")
     boolean clsExplore = task.endsWith("explore (no labels yet)")
     boolean clsTrain = task.endsWith("train classifier")
+    boolean clsCorpus = task.endsWith("corpus (all slides)")
     boolean clsPredict = task.endsWith("predict")
     boolean exportLabels = task.startsWith("Export labelled cells")
     boolean pairing = task == "Pair soma + nuclei into cells"
@@ -330,12 +336,20 @@ def syncEnabled = {
                          "Writes bal_classify/clusters.png showing the most typical cells of each\n" +
                          "cluster -- name those, label examples, then come back and train.")
     if (clsTrain)
-        taskDesc.setText("Train a classifier on the cells you labelled by hand, using the\n" +
-                         "transformer's embeddings. Reports cross-validated per-class recall,\n" +
-                         "saves the classifier, then classifies the unlabelled cells.")
+        taskDesc.setText("Train a classifier on the cells you labelled by hand IN THIS IMAGE, using\n" +
+                         "the transformer's embeddings. Reports cross-validated per-class recall,\n" +
+                         "saves the classifier, then classifies the unlabelled cells. Good for one\n" +
+                         "slide; for a model to use on other slides, train on the corpus instead.")
+    if (clsCorpus)
+        taskDesc.setText("Train on every labelled crop exported so far, from all slides -- the\n" +
+                         "bal_classify/crops folder that 'Export labelled cells' fills. Needs no\n" +
+                         "cells in the open image. This is the one that gives a classifier worth\n" +
+                         "applying to a slide it has never seen; one slide's labels only fit that\n" +
+                         "slide's staining. Training is always a fresh fit over ALL the labels.")
     if (clsPredict)
-        taskDesc.setText("Apply a saved classifier to every cell in this image. Predictions come\n" +
-                         "back as classifications you can correct, then retrain.")
+        taskDesc.setText("Apply a saved classifier to the cells in this image. Classes you set by\n" +
+                         "hand are kept unless you tick the box below. Predictions come back as\n" +
+                         "classifications you can correct, then retrain.")
     if (converting)
         taskDesc.setText("Turn the selected objects into the other type, in place. Only annotations\n" +
                          "can be reshaped with the brush, and only detections/cells are classified,\n" +
@@ -391,8 +405,11 @@ def syncEnabled = {
               "otherwise every detection -- so avoid leaving a mix, or the plain detections\n" +
               "are silently skipped.")
     clustersField.setDisable(!clsExplore)
-    classifierField.setDisable(!(clsTrain || clsPredict)); classifierBrowse.setDisable(!(clsTrain || clsPredict))
+    boolean needsClassifierFile = clsTrain || clsCorpus || clsPredict
+    classifierField.setDisable(!needsClassifierFile); classifierBrowse.setDisable(!needsClassifierFile)
     reuseCheck.setDisable(!classifying)
+    overwriteCheck.setDisable(!clsPredict)
+    if (!clsPredict) overwriteCheck.setSelected(false)      // never carries over by accident
     // Classification works on whatever cells already exist, so the segmentation model and
     // its settings are irrelevant here. The model row itself is switched off at the END of
     // this closure: the model-description lines below would overwrite the explanation.
@@ -616,6 +633,7 @@ def clsGrid = newGrid()
 addTo(clsGrid, "Clusters (explore):", clustersField)
 addTo(clsGrid, "Classifier file:", classifierRow)
 rightTo(clsGrid, reuseCheck)
+rightTo(clsGrid, overwriteCheck)
 
 def box = new VBox(6)
 box.setPadding(new Insets(10))
@@ -842,7 +860,9 @@ if (task.startsWith("Export labelled cells")) {
 // --- classification tasks: they use the cells already present ----------------
 if (task.startsWith("Classify cells")) {
     BAL_CLASSIFY_MODE = task.endsWith("explore (no labels yet)") ? 'EXPLORE' :
-                        task.endsWith("train classifier") ? 'TRAIN' : 'PREDICT'
+                        task.endsWith("train classifier") ? 'TRAIN' :
+                        task.endsWith("corpus (all slides)") ? 'TRAIN_CORPUS' : 'PREDICT'
+    BAL_PREDICT_OVERWRITE = overwriteCheck.isSelected()
     BAL_CLUSTERS = Math.max(2, (clustersField.getText()?.trim() ?: "5") as int)
     BAL_CLASSIFIER = classifierField.getText()?.trim() ?: ""
     BAL_REUSE_EMBEDDINGS = reuseCheck.isSelected()

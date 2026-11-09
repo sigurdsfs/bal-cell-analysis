@@ -42,8 +42,9 @@ Everything is reachable from **one entry point**: `qupath_bal_gui.groovy`.
 | **Export corrections to training corpus** | Adds this project's corrected regions to a shared ground-truth folder |
 | **Train model on corrected regions** | Fine-tunes Cellpose on that ground truth |
 | **Classify cells: explore** | Clusters cells by transformer embedding; writes a montage to name the clusters |
-| **Classify cells: train classifier** | Trains a cell-type classifier from your hand-set classes |
-| **Classify cells: predict** | Applies a saved classifier and writes the classes back onto the cells |
+| **Classify cells: train classifier** | Trains a cell-type classifier from the classes you set in this image |
+| **Classify cells: train on labelled corpus** | Trains on every labelled crop from every slide — the model to use on a slide it has not seen |
+| **Classify cells: predict** | Applies a saved classifier and writes the classes back onto the cells. Classes you set by hand are kept unless you ask for them to be re-predicted |
 | **Export labelled cells** | One labelled set → Cellpose masks **and** per-class crops for the classifier |
 
 Two scripts run outside the dialog:

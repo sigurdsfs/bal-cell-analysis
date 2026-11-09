@@ -33,9 +33,13 @@ models/
 # Classifier working files: regenerated from the cells in QuPath
 Mathilde Data/bal_classify/cells.geojson
 Mathilde Data/bal_classify/cells.parquet
+Mathilde Data/bal_classify/corpus.parquet
 Mathilde Data/bal_classify/predictions.csv
 Mathilde Data/bal_classify/cluster_*.csv
 Mathilde Data/bal_classify/*.png
+# One crop per cell of the open image, rewritten on every classify run.
+Mathilde Data/bal_classify/cells_crops/
+Mathilde Data/bal_classify/cells_manifest.csv
 
 # Cellpose scratch
 cellpose-temp/

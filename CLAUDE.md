@@ -44,6 +44,7 @@ The harnesses live in `Mathilde Data/qupath_scripts/tests/`. Run with:
 | `test_nucleus_pass.groovy` | the nucleus pass, and that `Output type = Cells` needs it |
 | `test_layout_sections.groovy` | each task opens exactly the collapsible sections it uses |
 | `test_convert_objects.groovy` | annotation ⇄ detection: class, name, measurements, **ID**, nesting, nucleus split (builds its own image — needs no project) |
+| `test_crop_styles.groovy` | the classifier's crops: the neighbour goes, the cell stays, the fill looks like slide, both exporters use the same maker (needs no project) |
 | `test_export_labels.groovy` | classified cells stay in the masks; soma and nucleus corpora stay separate (needs a project) |
 | `test_prune2.groovy` | checkpoint pruning, including the log being wiped mid-run |
 | `test_summary2.groovy` | training-loss verdicts against synthetic curves |
@@ -90,6 +91,11 @@ qupath_bal_gui.groovy
 ├── qupath_export_labels.groovy         labelled cells -> masks AND per-class crops
 └── qupath_batch_slides.groovy          the whole pipeline over every image in a project
         └── bal_classify/embed_cells.py + classify_cells.py
+
+Shared, evaluated rather than run: `bal_config.groovy` (paths and settings) and
+`bal_crops.groovy` (**how a cell becomes a crop** — used by both
+`qupath_export_cells.groovy`, which cuts the crops the classifier is applied to, and
+`qupath_export_labels.groovy`, which cuts the ones it is trained on).
 ```
 
 Standalone helpers: `qupath_test_region.groovy` (benchmark regions),
@@ -192,6 +198,30 @@ files parsed fine on their own. `test_pre_combination.groovy` compiles every pai
 - Parquet round-trips as **Arrow-backed columns**; `.values` then breaks sklearn indexing.
   Use `.to_numpy(dtype=float)` / `.astype(str).to_numpy()`.
 - Do not name scratch files after stdlib modules (`types.py`, `inspect.py`).
+
+### The classifier
+
+- **Phikon-v2 is never trained.** It is a fixed instrument: 128 px crop in, 1024 numbers
+  out. What is saved and loaded is the logistic regression on top, with its scaler —
+  refitting it takes a second, so there is no warm start and `train` always starts over.
+  **The labels accumulate, not the model**: that is what `crops/` is for.
+- **`embed_cells.py --geojson` reads pixels from one hard-coded zarr** of slide #2. On any
+  other image the coordinates are clamped into that zarr's bounds and you embed unrelated
+  tissue with no error. Use `--manifest` (crops cut by QuPath from the open image). The
+  flag is kept only so old command lines still run, and it now warns.
+- **`predict` scores every cell it is given, including ones you classified by hand**, and
+  the import applies predictions by ID — so without the `--overwrite` guard it replaces
+  hand labels with guesses and nothing afterwards tells them apart. `train` never had this
+  problem: it only predicts the unlabelled ones.
+- **A crop with a neighbour in it embeds that neighbour.** The CLS token summarises the
+  whole window, and on this slide a median of **37%** of each 128 px window was other
+  cells. `bal_crops.groovy` paints them out. Training and inference crops must be made the
+  same way: the style is recorded per crop in `labels.csv`, in the manifest and in the
+  saved model, and a mismatch is refused rather than scored.
+- **Appending a column to `labels.csv` shifts every row already in it** unless the old rows
+  are remapped by column name. Writing the new header above old 5-column rows made `x` be
+  read as the crop style — which surfaced as "the corpus holds crops made 26 different
+  ways". `test_crop_styles.groovy` covers the migration.
 
 ---
 

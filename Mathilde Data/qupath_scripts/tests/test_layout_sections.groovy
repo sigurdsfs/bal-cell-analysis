@@ -68,6 +68,8 @@ def EXPECTED = [
         ["Classification"],
     "Classify cells: train classifier":
         ["Classification"],
+    "Classify cells: train on labelled corpus (all slides)":
+        ["Classification"],
     "Classify cells: predict":
         ["Classification"],
 ]

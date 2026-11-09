@@ -10,6 +10,7 @@ def tasks = ["Segment cells", "Pair soma + nuclei into cells",
              "Convert selected objects (annotation <-> detection)", "Prepare training regions",
              "Export corrections to training corpus", "Train model on corrected regions",
              "Classify cells: explore (no labels yet)", "Classify cells: train classifier",
+             "Classify cells: train on labelled corpus (all slides)",
              "Classify cells: predict", "Export labelled cells (segmentation + classifier)"]
 def models = ["Cellpose cyto3 (whole cells)", "Cellpose cyto2 (whole cells)",
               "Cellpose-SAM (cpsam)", "Custom Cellpose model..."]

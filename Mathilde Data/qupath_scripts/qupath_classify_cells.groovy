@@ -6,14 +6,23 @@
  * granules -- which no average can see. Phikon-v2 is a ViT trained on histology; a small
  * classifier on its embeddings needs far fewer labels and sees those patterns.
  *
- * THREE MODES (BAL_CLASSIFY_MODE):
- *   'EXPLORE' - no labels yet. Clusters the embeddings and writes bal_classify/clusters.png
- *               so you can see which cell types are on the slide before labelling.
- *   'TRAIN'   - uses the classes you set by hand, reports cross-validated per-class scores,
- *               saves the classifier, and predicts the rest.
- *   'PREDICT' - applies a saved classifier to every cell.
+ * FOUR MODES (BAL_CLASSIFY_MODE):
+ *   'EXPLORE'      no labels yet. Clusters the embeddings and writes bal_classify/clusters.png
+ *                  so you can see which cell types are on the slide before labelling.
+ *   'TRAIN'        uses the classes you set by hand IN THIS IMAGE, reports cross-validated
+ *                  per-class scores, saves the classifier, and predicts the rest.
+ *   'TRAIN_CORPUS' trains on the crops exported from EVERY slide instead -- the only mode
+ *                  that produces a classifier worth using on an image it has not seen.
+ *                  Needs no cells in the open image; it reads bal_classify/crops/.
+ *   'PREDICT'      applies a saved classifier. Cells you classified by hand keep their
+ *                  class unless BAL_PREDICT_OVERWRITE is set.
  *
  * Predictions come back into QuPath as classifications, so you can correct them and retrain.
+ *
+ * The transformer itself is never trained -- it is a fixed instrument. What is saved and
+ * loaded is the small classifier on top of its embeddings, and TRAINING IS ALWAYS A FRESH
+ * FIT: nothing carries over from the saved file. So "more training" means re-fitting over
+ * all the labels, which is why they accumulate in crops/ rather than in the model.
  *
  * LABEL FIRST (for TRAIN): select a cell, then in the Annotations tab click a class and
  * right-click > Set selected. Aim for 40-60 per type. qupath_setup_classes.groovy puts the
@@ -29,6 +38,8 @@ def CLASSIFIER = binding.hasVariable('BAL_CLASSIFIER') && BAL_CLASSIFIER?.toStri
 // Embedding is the slow step (~1 s per 60 cells on the GPU). Reuse the parquet when the
 // cells haven't changed since it was written.
 boolean REUSE = binding.hasVariable('BAL_REUSE_EMBEDDINGS') ? BAL_REUSE_EMBEDDINGS as boolean : false
+// PREDICT only: re-predict cells that already carry a hand-set class, replacing it.
+boolean OVERWRITE = binding.hasVariable('BAL_PREDICT_OVERWRITE') ? BAL_PREDICT_OVERWRITE as boolean : false
 
 // Machine-specific paths come from bal_config.groovy (with bal_config.local.groovy
 // overriding it); the literals below are only a fallback for running this file alone.
@@ -93,6 +104,54 @@ def run = { List<String> cmd ->
     code
 }
 
+// --- 0. corpus training: the open image is not involved at all ---------------
+// WHY A SEPARATE MODE: a classifier fitted on one slide's cells is fitted to that slide's
+// staining and focus as much as to its cell types, and the cross-validated scores cannot
+// show it -- every fold resamples the same slide. The crops folder is where labels from
+// every slide accumulate, so this is the mode that produces a transferable model.
+if (MODE == 'TRAIN_CORPUS') {
+    def cropsDir = new File(BAL_DIR, "crops")
+    def classDirs = cropsDir.exists()
+            ? cropsDir.listFiles({ f -> f.isDirectory() } as java.io.FileFilter) : null
+    if (classDirs == null || classDirs.length == 0) {
+        Dialogs.showErrorMessage("Classify cells",
+                "No labelled crops at\n${cropsDir}\n\n" +
+                "Label cells, put them inside a Training/Validation rectangle, and run\n" +
+                "'Export labelled cells' once per slide. That is what fills this folder.")
+        return
+    }
+    def counts = classDirs.collectEntries { [it.getName(), it.listFiles({ f -> f.getName().endsWith(".png") }
+            as java.io.FileFilter)?.length ?: 0] }
+    int total = counts.values().sum() as int
+    println "=== Training on the whole corpus: ${total} labelled crop(s) in ${counts.size()} class(es) ==="
+    counts.sort { -it.value }.each { cls, n -> println "  ${n}  ${cls}" }
+    if (total < 20) {
+        Dialogs.showErrorMessage("Classify cells",
+                "Only ${total} labelled crop(s) in the corpus.\n\n" +
+                "Aim for 40-60 per cell type, gathered from more than one slide.")
+        return
+    }
+    def corpus = new File(BAL_DIR, "corpus.parquet")
+    if (REUSE && corpus.exists()) {
+        println "Reusing ${corpus.getName()} -- untick 'reuse' after exporting more crops."
+    } else if (run([python, "embed_cells.py", "--crops", "crops", "--out", "corpus.parquet"]) != 0) {
+        Dialogs.showErrorMessage("Classify cells", "Embedding the corpus failed -- see the log.")
+        return
+    }
+    def trainCmd = [python, "classify_cells.py", "train", "--cells", "corpus.parquet"]
+    if (CLASSIFIER != null) trainCmd += ["--model", CLASSIFIER]
+    if (run(trainCmd) != 0) {
+        Dialogs.showErrorMessage("Classify cells", "Training on the corpus failed -- see the log.")
+        return
+    }
+    println ""
+    println "The classifier is saved. Open any slide, segment it, and run the predict task to"
+    println "apply it -- the crops are cut from whichever image is open, so it travels."
+    println "Correct what it gets wrong, export those cells again, and retrain: the corpus"
+    println "grows, the model is refitted from scratch over all of it."
+    return
+}
+
 // --- 1. export the cells QuPath currently holds ------------------------------
 def cells = getCellObjects()
 if (cells.isEmpty()) cells = getDetectionObjects()
@@ -110,6 +169,7 @@ if (MODE == 'TRAIN' && labelled < 20) {
 }
 
 BAL_EXPORT_MODE = 'EXPORT'
+BAL_EXPORT_CROPS = true          // the pixels the transformer sees, cut from THIS image
 evaluate(PRE + new File(scriptDir, "qupath_export_cells.groovy").text)
 
 // --- 2. embed the crops with the transformer ---------------------------------
@@ -117,7 +177,9 @@ def parquet = new File(BAL_DIR, "cells.parquet")
 if (REUSE && parquet.exists()) {
     println "Reusing existing embeddings (${parquet.getName()}) -- untick 'reuse' after re-segmenting."
 } else {
-    if (run([python, "embed_cells.py", "--geojson", "cells.geojson", "--out", "cells.parquet"]) != 0) {
+    // --manifest, never --geojson: the geojson path reads pixels from one hard-coded zarr,
+    // so on any other slide it embeds unrelated tissue without saying so.
+    if (run([python, "embed_cells.py", "--manifest", "cells_manifest.csv", "--out", "cells.parquet"]) != 0) {
         Dialogs.showErrorMessage("Classify cells", "Embedding failed -- see the log.")
         return
     }
@@ -128,6 +190,9 @@ def cmd = [python, "classify_cells.py"]
 if (MODE == 'EXPLORE')      cmd += ["explore", "--cells", "cells.parquet", "--clusters", String.valueOf(CLUSTERS)]
 else if (MODE == 'PREDICT') cmd += ["predict", "--cells", "cells.parquet"]
 else                        cmd += ["train", "--cells", "cells.parquet"]
+// Without this, predict would re-score the cells you classified by hand and the import
+// would replace each label with a guess -- destroying the only data anyone spent time on.
+if (MODE == 'PREDICT' && OVERWRITE) cmd += ["--overwrite"]
 if (CLASSIFIER != null && MODE != 'EXPLORE') cmd += ["--model", CLASSIFIER]
 
 if (run(cmd) != 0) {
