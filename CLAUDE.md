@@ -40,6 +40,8 @@ The harnesses live in `Mathilde Data/qupath_scripts/tests/`. Run with:
 | `test_api_calls.groovy` | every `Dialogs.*` / `FileChoosers.*` call actually exists |
 | `test_custom_model.groovy` | a custom model is known at *selection* time: diameter, training defaults, Browse |
 | `test_config_block.groovy` | every script that reads `CFG` declares it **in its own body**, before use |
+| `test_nucleus_pass.groovy` | the nucleus pass, and that `Output type = Cells` needs it |
+| `test_export_labels.groovy` | classified cells stay in the masks; soma and nucleus corpora stay separate (needs a project) |
 | `test_prune2.groovy` | checkpoint pruning, including the log being wiped mid-run |
 | `test_summary2.groovy` | training-loss verdicts against synthetic curves |
 | `test_corpus_multislide.groovy` | corpus prefixing, per-slide counts, train/test overlap |
@@ -75,8 +77,7 @@ Keep it that way: no logic duplicated between GUI and worker.
 ```
 qupath_bal_gui.groovy
 ├── qupath_cellpose_detection.groovy    cellpose (cpsam / cyto3 / cyto2 / custom)
-├── qupath_instanseg_detection.groovy   InstanSeg nuclei, in-process via DJL
-├── qupath_cells_with_nuclei.groovy     pairs the two into cell objects
+├── qupath_cells_with_nuclei.groovy     soma + nuclei (both Cellpose) -> cell objects
 ├── qupath_cell_features.groovy         all per-cell measurements
 ├── qupath_prepare_training.groovy      Training/Validation rectangles
 ├── qupath_export_training_data.groovy  adds corrections to the shared corpus
@@ -177,8 +178,23 @@ Standalone helpers: `qupath_test_region.groovy` (benchmark regions),
   an early "nucleus > 95% of cell is a bad match" rule discarded exactly the lymphocytes.
 - **Measure eosin as red − green, not red − blue.** In MGG eosin renders magenta; a red-vs-blue
   test reports zero eosin everywhere and led to a wrong conclusion about the stain.
-- **InstanSeg's own 0.5 µm/px makes nucleus ≈ cell here**, which guts `nc_ratio`
-  (IQR 0.18 vs 0.48). It runs at 0.25 µm/px instead.
+- **Nuclei come from Cellpose's `nuclei` model, not InstanSeg.** InstanSeg cannot be
+  fine-tuned from QuPath, so a bad nucleus mask could be seen and never fixed. Its own
+  0.5 µm/px also made nucleus ≈ cell here, gutting `nc_ratio` (IQR 0.18 vs 0.48 at
+  0.25 µm/px). `qupath_instanseg_detection.groovy` is still on disk and still runs
+  standalone, but nothing in the dialog reaches it.
+- **The `nuclei` model has `diam_mean` 17, where the cyto models use 30.** Give it the
+  nucleus size, not the cell size, or it rescales by the wrong factor.
+- **`Output type = Cells` without a real nucleus is a trap, and the dialog now forbids it.**
+  The inner boundary would be the soma and the outer an invented ring, making `nc_ratio`
+  a function of diameter that runs *backwards* against the real one: measured 0.445 for a
+  7.8 µm cell and 0.779 for a 30 µm one, where real lymphocytes are 0.8+ and macrophages
+  0.3–0.5.
+- **Class `Nucleus` marks a nucleus annotation; everything else that is not a
+  Training/Validation rectangle is a soma.** Soma and nucleus ground truth are separate
+  corpora over the same pixels — soma at `<corpus>/train|test`, nuclei at
+  `<corpus>/nuclei/train|test`. Letting a nucleus into a soma mask puts a second, smaller
+  object inside every cell and poisons the corpus with no error anywhere.
 - **Always run the diameter-matched control before claiming a fine-tune helped.** Stock cyto3
   at diameter 98 matched the "improved" fine-tuned model exactly — the gain was scale, not learning.
 - **Check which field of view a measurement came from.** The overview series covers the whole

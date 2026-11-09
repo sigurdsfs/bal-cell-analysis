@@ -68,6 +68,11 @@ int SAVE_EVERY = binding.hasVariable('BAL_SAVE_EVERY') ? BAL_SAVE_EVERY as int :
 // truth gathered from several slides. Left empty, training exports and uses this project only.
 def GT_DIR    = binding.hasVariable('BAL_GT_DIR') && BAL_GT_DIR?.toString()?.trim() ?
         new File(BAL_GT_DIR.toString().trim()) : null
+// Soma and nucleus ground truth live side by side under one corpus folder: soma at the top
+// (where the existing hand-corrected data already is) and nuclei one level down. Training
+// on both at once would teach the model an average of a cell and a nucleus.
+def TRAIN_TARGET = binding.hasVariable('BAL_TRAIN_TARGET') ? BAL_TRAIN_TARGET.toString().toUpperCase() : 'SOMA'
+if (GT_DIR != null && TRAIN_TARGET == 'NUCLEI') GT_DIR = new File(GT_DIR, "nuclei")
 
 // --- environments ------------------------------------------------------------
 def samPython = (CFG.pythonCellpose4 ?: [

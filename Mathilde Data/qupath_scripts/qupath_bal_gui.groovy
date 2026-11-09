@@ -64,21 +64,21 @@ if (prefs.getInt("defaultsVersion", 1) < DEFAULTS_VERSION) {
 }
 
 // --- the models on offer ------------------------------------------------------
-// Only models that can actually run on this machine are listed. Descriptions say what
-// each one segments, since nuclei and whole cells are not interchangeable.
-def instansegDir = new File(System.getProperty("user.home"), "QuPath/v0.7/instanseg/downloaded")
+// Every entry here segments SOMA (whole-cell) outlines. Nuclei are a separate, optional
+// pass below, because they are a different target with a different model and their own
+// ground truth -- conflating the two is what made "cyto3 + InstanSeg nuclei" a model in
+// its own right, which it never really was.
+//
+// InstanSeg was removed: it cannot be fine-tuned from QuPath, so a bad nucleus mask could
+// be seen but not fixed. Cellpose's nuclei model goes through the same correct-export-train
+// loop as everything else.
 def MODELS = [
-    "cyto3 cells + InstanSeg nuclei": [
-        engine: 'paired', arg: 'cyto3', diameter: 58,
-        desc: "RECOMMENDED for classification. Cell outlines from cyto3 with\n" +
-              "the nucleus from InstanSeg inside each one, paired into cell\n" +
-              "objects. Adds a true nc_ratio, nuclear shape (lobes) and\n" +
-              "cytoplasm-only colour -- the features that separate BAL types."],
     "Cellpose cyto3 (whole cells)": [
         engine: 'cellpose', arg: 'cyto3', diameter: 58,
-        desc: "Whole cells only, cellpose 3. SPLITS CLUMPS BETTER than cpsam:\n" +
-              "on a clumpy test region it found 63 cells against cpsam's 40,\n" +
-              "and it is 2-3x faster. Needs the cell diameter (58 px here)."],
+        desc: "RECOMMENDED. Whole cells, cellpose 3. SPLITS CLUMPS BETTER\n" +
+              "than cpsam: on a clumpy test region it found 63 cells against\n" +
+              "cpsam's 40, and it is 2-3x faster. Needs the cell diameter\n" +
+              "(58 px here)."],
     "Cellpose-SAM (cpsam)": [
         engine: 'cellpose', arg: 'cpsam',
         desc: "Whole cells, via Python + GPU. SCALE-FREE, so cell diameter is\n" +
@@ -90,25 +90,29 @@ def MODELS = [
         desc: "Whole cells, the older cellpose 2 model. Similar to cyto3\n" +
               "on this slide (71 vs 63 objects on the clumpy region).\n" +
               "Worth trying if cyto3 over-splits."],
-    "InstanSeg: brightfield nuclei": [
-        engine: 'instanseg', arg: new File(instansegDir, "brightfield_nuclei-0.1.1").absolutePath,
-        desc: "NUCLEI only, not whole cells -- areas are NOT comparable\n" +
-              "with Cellpose. Runs inside QuPath, no Python needed.\n" +
-              "Currently CPU-only here, so slower than Cellpose on GPU."],
-    "InstanSeg: fluorescence nuclei + cells": [
-        engine: 'instanseg', arg: new File(instansegDir, "fluorescence_nuclei_and_cells-0.1.1").absolutePath,
-        desc: "For FLUORESCENCE images. Your slide is brightfield MGG,\n" +
-              "so this is the wrong model for it -- listed for completeness."],
     "Custom Cellpose model...": [
         engine: 'cellpose', arg: null,
-        desc: "A model you fine-tuned yourself, e.g. from corrected masks\n" +
-              "in the Cellpose GUI. You'll be asked for the model file.\n" +
-              "It must be trained with the same cellpose version (4.x)."],
+        desc: "A soma model you fine-tuned yourself. You'll be asked for the\n" +
+              "model file the moment you pick this. A name containing 'cpsam'\n" +
+              "is run in the cellpose 4 environment, anything else in 3.x."],
+]
+
+// The optional nucleus pass. Same engine, same training loop -- only the target differs.
+def NUCLEUS_MODELS = [
+    "Cellpose nuclei": [
+        arg: 'nuclei', diameter: 40,
+        desc: "Cellpose's nuclei model. diam_mean is 17 here, not the 30 the\n" +
+              "cyto models use, so give it the NUCLEUS size, not the cell size."],
+    "Custom nucleus model...": [
+        arg: null, diameter: 40,
+        desc: "A nuclei model you fine-tuned from corrected nucleus masks."],
 ]
 
 def modelBox = new ComboBox<String>()
 modelBox.getItems().addAll(MODELS.keySet())
-modelBox.getSelectionModel().select(prefs.get("model", "cyto3 cells + InstanSeg nuclei"))
+// The old default named a model that no longer exists; fall back rather than show blank.
+def savedModel = prefs.get("model", "Cellpose cyto3 (whole cells)")
+modelBox.getSelectionModel().select(MODELS.containsKey(savedModel) ? savedModel : "Cellpose cyto3 (whole cells)")
 def modelDesc = new Label()
 modelDesc.setWrapText(true)
 modelDesc.setStyle("-fx-font-size: 11px; -fx-text-fill: -fx-accent;")
@@ -146,6 +150,36 @@ modelRow.add(modelBox, 0, 0)
 modelRow.add(modelBrowse, 1, 0)
 GridPane.setHgrow(modelBox, Priority.ALWAYS)
 
+// --- the optional nucleus pass -----------------------------------------------
+def nucleiCheck = new CheckBox("Also segment nuclei, and pair them into cell objects")
+nucleiCheck.setSelected(prefs.getBoolean("nuclei", true))
+def nucleusBox = new ComboBox<String>()
+nucleusBox.getItems().addAll(NUCLEUS_MODELS.keySet())
+def savedNucleus = prefs.get("nucleusModel", "Cellpose nuclei")
+nucleusBox.getSelectionModel().select(NUCLEUS_MODELS.containsKey(savedNucleus) ? savedNucleus : "Cellpose nuclei")
+def nucleusDiameterField = new TextField(prefs.get("nucleusDiameter", "40"))
+def customNucleus = null
+def rememberedNucleus = prefs.get("customNucleusModel", "")
+if (rememberedNucleus) {
+    def f = new File(rememberedNucleus)
+    if (f.exists()) customNucleus = f
+}
+def nucleusBrowse = new javafx.scene.control.Button("Browse...")
+def nucleusRow = new GridPane()
+nucleusRow.setHgap(6)
+nucleusRow.add(nucleusBox, 0, 0)
+nucleusRow.add(nucleusBrowse, 1, 0)
+GridPane.setHgrow(nucleusBox, Priority.ALWAYS)
+def nucleusDesc = new Label()
+nucleusDesc.setWrapText(true)
+nucleusDesc.setStyle("-fx-font-size: 11px; -fx-text-fill: -fx-accent;")
+
+// Which ground truth the export writes and the trainer reads. Soma and nuclei are separate
+// corpora over the same pixels, so this picks one; it is never both.
+def targetBox = new ComboBox<String>()
+targetBox.getItems().addAll("Soma (whole cells)", "Nuclei")
+targetBox.getSelectionModel().select(prefs.get("target", "Soma (whole cells)"))
+
 def outputBox = new ComboBox<String>()
 outputBox.getItems().addAll("Detections", "Annotations", "Cells")
 outputBox.getSelectionModel().select(prefs.get("output", "Detections"))
@@ -159,6 +193,7 @@ regionBox.getSelectionModel().select(prefs.get("region", "Selected objects only"
 def taskBox = new ComboBox<String>()
 taskBox.getItems().addAll(
         "Segment cells",
+        "Pair soma + nuclei into cells",
         "Prepare training regions",
         "Export corrections to training corpus",
         "Train model on corrected regions",
@@ -245,9 +280,14 @@ def syncEnabled = {
     boolean clsTrain = task.endsWith("train classifier")
     boolean clsPredict = task.endsWith("predict")
     boolean exportLabels = task.startsWith("Export labelled cells")
+    boolean pairing = task == "Pair soma + nuclei into cells"
 
     taskDesc.setText(
         segmenting ? "Segment cells in the selected region(s) and measure them." :
+        pairing    ? "Pair outlines ALREADY in the image into cell objects: every annotation\n" +
+                     "that is not a region rectangle counts as a soma, and any classed\n" +
+                     "'Nucleus' is matched into the soma that contains it. Use this after\n" +
+                     "correcting the outlines by hand. The annotations are consumed." :
         preparing  ? "Drop Training/Validation rectangles and segment inside them as editable\n" +
                      "annotations. You then correct every outline by hand -- densely: a cell you\n" +
                      "leave out teaches the model that it is background." :
@@ -272,11 +312,35 @@ def syncEnabled = {
 
     // segmentation-only
     [outputBox, regionBox, featuresCheck, clumpCheck, tileField].each { it.setDisable(!segmenting) }
+    // The nucleus pass belongs to segmentation; pairing uses the models only to describe
+    // what it is matching, so the fields stay off there.
+    nucleiCheck.setDisable(!segmenting)
+    boolean withNuclei = nucleiCheck.isSelected()
+    boolean customNucleusPicked = nucleusBox.getValue() == "Custom nucleus model..."
+    nucleusBox.setDisable(!segmenting || !withNuclei)
+    nucleusBrowse.setDisable(!segmenting || !withNuclei || !customNucleusPicked)
+    nucleusDiameterField.setDisable(!segmenting || !withNuclei)
+    def nm = NUCLEUS_MODELS[nucleusBox.getValue()]
+    nucleusDesc.setText(!withNuclei ? "" : (nm?.desc ?: "") + (customNucleusPicked
+            ? "\n\n" + (customNucleus != null ? "Using: ${customNucleus.getName()}"
+                                             : "No nucleus model chosen yet -- click Browse...")
+            : ""))
+    // Cells need an inner boundary to be worth anything. Without the nucleus pass the inner
+    // boundary would be the soma itself and the outer an invented ring, which turns nc_ratio
+    // into a function of cell diameter (0.445 for a 7.8 um cell, 0.78 for a 30 um one) --
+    // backwards from the real ratio. So the option is only offered when a nucleus exists.
+    boolean cellsAllowed = segmenting && withNuclei
+    if (!cellsAllowed && outputBox.getValue() == "Cells")
+        outputBox.getSelectionModel().select("Detections")
+    outputBox.getItems().retainAll(cellsAllowed ? ["Detections", "Annotations", "Cells"]
+                                                : ["Detections", "Annotations"])
+    if (cellsAllowed && !outputBox.getItems().contains("Cells")) outputBox.getItems().add("Cells")
     expansionField.setDisable(!segmenting || outputBox.getValue() != "Cells")
     clumpField.setDisable(!segmenting || !clumpCheck.isSelected() || !featuresCheck.isSelected())
     // training-only
     [trainRegionsField, valRegionsField, trainSizeField].each { it.setDisable(!preparing) }
     [epochsField, lrField, weightDecayField, sgdCheck].each { it.setDisable(!training) }
+    targetBox.setDisable(!(training || exportLabels))
     corpusField.setDisable(!(exporting || training || exportLabels))
     corpusBrowse.setDisable(!(exporting || training || exportLabels))
     clustersField.setDisable(!clsExplore)
@@ -312,25 +376,15 @@ def syncEnabled = {
     saveEachCheck.setDisable(!training || !samModel)
     saveEveryField.setDisable(!training || !samModel || !saveEachCheck.isSelected())
     modelDesc.setText(m?.desc ?: "")
-    boolean isInstanSeg = m?.engine == 'instanseg'
-    pixelField.setDisable(isInstanSeg && segmenting)
     // Diameter only means something for cyto2/cyto3-style models, which rescale the image by
     // diam_mean/diameter. cpsam is scale-free (cellpose 4 calls --diam_mean deprecated and
-    // unused) and InstanSeg has its own resolution, so the field stays off for both -- in
-    // every task, including training.
-    boolean usesDiameter = (m?.engine in ['cellpose', 'paired']) && !samModel
+    // unused), so the field stays off for it in every task, including training.
+    boolean usesDiameter = !samModel
     diameterField.setDisable(!usesDiameter)
     if (isCustom)
         modelDesc.setText((m?.desc ?: "") + "\n\n" + (customModel != null
                 ? "Using: ${customModel.getName()}\nRuns in ${customIsSam() ? 'cellpose 4 (cpsam): scale-free, so cell diameter is off' : 'cellpose 3 (cyto-style): cell diameter applies'}"
                 : "No model file chosen yet -- click Browse..."))
-    if (isInstanSeg && m.arg != null && !new File(m.arg.toString()).exists())
-        modelDesc.setText(m.desc + "\n\nNOT FOUND on disk - download it via Extensions > InstanSeg.")
-    // Training only works on Cellpose models: InstanSeg fine-tuning isn't supported from QuPath,
-    // and the paired mode is two models at once.
-    if ((preparing || training) && !classifying && m?.engine != 'cellpose')
-        modelDesc.setText((m?.desc ?: "") + "\n\nThis task needs a plain Cellpose model " +
-                "(cyto3, cyto2, cpsam or a custom one).")
 
     // LAST, so the description survives: these tasks never segment anything, they act on the
     // cells already in the image, so the whole model row is switched off rather than left
@@ -354,6 +408,38 @@ def chooseCustomModel = {
     f
 }
 modelBrowse.setOnAction({ chooseCustomModel() } as javafx.event.EventHandler)
+
+// Same deal for the nucleus model: pick the file when the entry is chosen, not at OK.
+def pickNucleusModel = {
+    def start = customNucleus?.getParentFile()
+    if (start == null || !start.exists()) {
+        def modelsDir = getProject() != null ? new File(buildFilePath(PROJECT_BASE_DIR, "models")) : null
+        start = (modelsDir != null && modelsDir.exists()) ? modelsDir : null
+    }
+    def filter = new javafx.stage.FileChooser.ExtensionFilter("Cellpose models", "*.cpm", "*")
+    qupath.fx.dialogs.FileChoosers.promptForFile(
+            null, "Choose a fine-tuned nucleus model", start, filter)
+}
+def chooseNucleusModel = {
+    def f = pickNucleusModel()
+    if (f != null) {
+        customNucleus = f
+        prefs.put("customNucleusModel", f.getAbsolutePath())
+    }
+    syncEnabled()
+    f
+}
+nucleusBrowse.setOnAction({ chooseNucleusModel() } as javafx.event.EventHandler)
+nucleiCheck.selectedProperty().addListener({ a, b, c -> syncEnabled() } as javafx.beans.value.ChangeListener)
+nucleusBox.valueProperty().addListener({ obs, oldN, newN ->
+    if (newN == "Custom nucleus model...") {
+        Platform.runLater {
+            if (chooseNucleusModel() == null && customNucleus == null)
+                nucleusBox.getSelectionModel().select(oldN)
+        }
+    }
+    syncEnabled()
+} as javafx.beans.value.ChangeListener)
 
 taskBox.valueProperty().addListener({ a, b, c -> syncEnabled() } as javafx.beans.value.ChangeListener)
 modelBox.valueProperty().addListener({ obs, oldModel, newModel ->
@@ -388,6 +474,10 @@ pane.add(taskDesc, 1, row++)
 pane.add(new Separator(), 0, row++, 2, 1)
 addRow("Model:", modelRow)
 pane.add(modelDesc, 1, row++)
+pane.add(nucleiCheck, 1, row++)
+addRow("Nucleus model:", nucleusRow)
+pane.add(nucleusDesc, 1, row++)
+addRow("Nucleus diameter (px):", nucleusDiameterField)
 addRow("Output type:", outputBox)
 addRow("Run on:", regionBox)
 addRow("Cell expansion (um):", expansionField)
@@ -413,6 +503,7 @@ addRow("Weight decay:", weightDecayField)
 pane.add(sgdCheck, 1, row++)
 pane.add(saveEachCheck, 1, row++)
 addRow("Checkpoint every N epochs:", saveEveryField)
+addRow("Ground truth:", targetBox)
 addRow("Training data folder:", corpusRow)
 pane.add(new Separator(), 0, row++, 2, 1)
 addRow("Clusters (explore):", clustersField)
@@ -456,12 +547,15 @@ def parseRegions = { TextField f, String name ->
 
 def task = taskBox.getValue()
 double pixelSize, tileSize, expansion, clumpArea, epochs, learningRate, trainSize, weightDecay
+double nucleusDiameter
 def trainRegions = [], valRegions = []
 try {
     pixelSize = asNumber(pixelField, "Pixel size", 0.001, 10)
     tileSize = asNumber(tileField, "Tile size", 64, 4096)
     expansion = asNumber(expansionField, "Cell expansion", 0, 100)
     clumpArea = clumpCheck.isSelected() ? asNumber(clumpField, "Clump area", 1, 1_000_000) : 0
+    // Upper bound is the cell diameter's: a "nucleus" larger than a cell is a typo.
+    nucleusDiameter = asNumber(nucleusDiameterField, "Nucleus diameter", 1, 1000)
     epochs = asNumber(epochsField, "Epochs", 1, 10000)
     // Lower bound must reach cpsam's 1e-5 (cellpose 4's default). An earlier 1e-4 floor
     // rejected the very value the dialog fills in for cpsam.
@@ -499,12 +593,7 @@ try {
 // --- remember for next time --------------------------------------------------
 // --- resolve the chosen model ------------------------------------------------
 def chosen = MODELS[modelBox.getValue()]
-if (!task.startsWith("Classify cells") && task != "Segment cells" && chosen.engine != 'cellpose') {
-    Dialogs.showErrorMessage("BAL segmentation",
-            "'${task}' needs a plain Cellpose model (cyto3, cyto2, cpsam or a custom one).\n\n" +
-            "'${modelBox.getValue()}' can't be fine-tuned from QuPath.")
-    return
-}
+// Every model on offer is now a Cellpose model, so there is no engine to guard against.
 def modelArg = chosen.arg
 if (chosen.engine == 'cellpose' && modelArg == null) {
     // The file was chosen when the dropdown changed, so by here it should already be known.
@@ -521,10 +610,20 @@ if (chosen.engine == 'cellpose' && modelArg == null) {
     // that, since our training script writes "bal_cpsam_..." or "bal_ft-<cpsam parent>".
     BAL_MODEL_IS_SAM = customIsSam()
     println "Custom model: ${customModel.getName()} -> treating as ${BAL_MODEL_IS_SAM ? 'cellpose 4 (cpsam)' : 'cellpose 3 (cyto-style)'}"
-} else if (chosen.engine == 'instanseg' && !new File(modelArg.toString()).exists()) {
-    Dialogs.showErrorMessage("BAL segmentation",
-            "That InstanSeg model isn't downloaded:\n${modelArg}\n\nGet it via Extensions > InstanSeg.")
-    return
+}
+
+// The nucleus model, resolved the same way.
+def chosenNucleus = NUCLEUS_MODELS[nucleusBox.getValue()]
+def nucleusArg = chosenNucleus?.arg
+if (nucleiCheck.isSelected() && nucleusArg == null) {
+    if (customNucleus == null || !customNucleus.exists()) {
+        Dialogs.showErrorMessage("BAL segmentation", customNucleus == null
+                ? "No custom nucleus model is chosen.\n\nClick Browse... next to the Nucleus model list."
+                : "That nucleus model is no longer on disk:\n${customNucleus.getAbsolutePath()}")
+        return
+    }
+    nucleusArg = customNucleus.getAbsolutePath()
+    println "Custom nucleus model: ${customNucleus.getName()}"
 }
 
 prefs.put("model", modelBox.getValue())
@@ -545,6 +644,10 @@ prefs.putBoolean("saveEach", saveEachCheck.isSelected()); prefs.put("saveEvery",
 prefs.put("clusters", clustersField.getText()); prefs.put("classifier", classifierField.getText())
 prefs.putBoolean("reuseEmb", reuseCheck.isSelected())
 prefs.put("corpus", corpusField.getText())
+prefs.put("target", targetBox.getValue())
+prefs.putBoolean("nuclei", nucleiCheck.isSelected())
+prefs.put("nucleusModel", nucleusBox.getValue())
+prefs.put("nucleusDiameter", nucleusDiameterField.getText())
 
 // --- hand the settings to the worker scripts ---------------------------------
 // Assigning without 'def' puts these in the shared binding, where the other scripts read them.
@@ -573,7 +676,9 @@ long t0 = System.currentTimeMillis()
 // --- export hand-labelled cells for both pipelines ---------------------------
 if (task.startsWith("Export labelled cells")) {
     BAL_GT_DIR = corpusField.getText()?.trim() ?: ""
-    BAL_EXPORT_WHAT = 'BOTH'
+    BAL_EXPORT_TARGET = targetBox.getValue().startsWith("Nuclei") ? 'NUCLEI' : 'SOMA'
+    // Cell-type crops come from soma outlines; nuclei carry no cell-type class.
+    BAL_EXPORT_WHAT = BAL_EXPORT_TARGET == 'NUCLEI' ? 'SEGMENTATION' : 'BOTH'
     println "=== ${task} ==="
     evaluate(PRE + new File(scriptDir, "qupath_export_labels.groovy").text)
     def mins = (System.currentTimeMillis() - t0) / 60000.0
@@ -597,6 +702,20 @@ if (task.startsWith("Classify cells")) {
     return
 }
 
+// --- pair outlines that are already in the image ------------------------------
+if (task == "Pair soma + nuclei into cells") {
+    BAL_PAIR_SOURCE = 'ANNOTATIONS'
+    BAL_MEASURE_ROI = 'CELL'
+    println "=== ${task} ==="
+    evaluate(PRE + new File(scriptDir, "qupath_cells_with_nuclei.groovy").text)
+    if (featuresCheck.isSelected())
+        evaluate(PRE + new File(scriptDir, "qupath_cell_features.groovy").text)
+    def secs = (System.currentTimeMillis() - t0) / 1000.0
+    println "=== finished in ${secs}s ==="
+    Dialogs.showInfoNotification("BAL segmentation", String.format("Pairing finished in %.1f s", secs))
+    return
+}
+
 // --- the two training tasks leave early; segmentation continues below ---------
 if (task != "Segment cells") {
     BAL_MODEL = modelArg
@@ -608,6 +727,7 @@ if (task != "Segment cells") {
     if (chosen.arg != null) BAL_MODEL_IS_SAM = (modelArg == 'cpsam')
 
     BAL_GT_DIR = corpusField.getText()?.trim() ?: ""
+    BAL_TRAIN_TARGET = targetBox.getValue().startsWith("Nuclei") ? 'NUCLEI' : 'SOMA'
 
     if (task == "Prepare training regions") {
         println "=== Preparing training regions: ${modelBox.getValue()}, ${trainRegions.size()} training + " +
@@ -645,20 +765,15 @@ if (task != "Segment cells") {
 println "=== BAL segmentation: ${modelBox.getValue()}, ${outputBox.getValue()}, ${regionBox.getValue()} ==="
 
 def worker
-if (chosen.engine == 'instanseg') {
-    BAL_INSTANSEG_MODEL = modelArg
-    BAL_DEVICE = 'cpu'                       // QuPath has the CPU build of PyTorch installed
-    BAL_TILE_SIZE = Math.min(BAL_TILE_SIZE, 512)   // InstanSeg works in smaller tiles
-    worker = "qupath_instanseg_detection.groovy"
-} else if (chosen.engine == 'paired') {
-    BAL_MODEL = modelArg
-    BAL_DIAMETER = diameterField.getText().trim() as double
-    BAL_DEVICE = 'cpu'
+BAL_MODEL = modelArg                         // 'cpsam', 'cyto3', 'cyto2', or a fine-tuned model path
+BAL_DIAMETER = chosen.diameter != null ? (diameterField.getText().trim() as double) : 0
+if (nucleiCheck.isSelected()) {
+    BAL_NUCLEUS_MODEL = nucleusArg
+    BAL_NUCLEUS_DIAMETER = nucleusDiameter
+    BAL_PAIR_SOURCE = 'SEGMENT'
     BAL_MEASURE_ROI = 'CELL'                 // the 12 features describe the whole cell here
     worker = "qupath_cells_with_nuclei.groovy"
 } else {
-    BAL_MODEL = modelArg                     // 'cpsam', 'cyto3', 'cyto2', or a fine-tuned model path
-    BAL_DIAMETER = chosen.diameter != null ? (diameterField.getText().trim() as double) : 0
     worker = "qupath_cellpose_detection.groovy"
 }
 evaluate(PRE + new File(scriptDir, worker).text)

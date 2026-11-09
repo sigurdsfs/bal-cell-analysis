@@ -21,7 +21,7 @@ def stubbed = SRC.replace(".showAndWait()",
         ".with { REPORT(modelDesc, diameterField, modelBrowse, customModel, lrField, sgdCheck, modelBox); Optional.empty() }")
 
 def prefs = Preferences.userRoot().node("bal_segmentation")
-def savedModel = prefs.get("model", "cyto3 cells + InstanSeg nuclei")
+def savedModel = prefs.get("model", "Cellpose cyto3 (whole cells)")
 def savedTask = prefs.get("task", "Segment cells")
 def savedCustom = prefs.get("customModel", "")
 
@@ -105,8 +105,8 @@ check("a cyto3 fine-tune trains at 0.1", r.lr == "0.1", "lr=${r.lr}")
 check("...with SGD", r.sgd, "sgd=${r.sgd}")
 
 println "\n=== Browse stays off for the built-in models ==="
-["cyto3 cells + InstanSeg nuclei", "Cellpose cyto3 (whole cells)", "Cellpose-SAM (cpsam)",
- "InstanSeg: brightfield nuclei"].each { mo ->
+["Cellpose cyto3 (whole cells)", "Cellpose cyto2 (whole cells)", "Cellpose-SAM (cpsam)"].each { mo ->
+
     def s = run("Segment cells", mo, samModel.getAbsolutePath())
     check("Browse disabled for '${mo}'", s.browseDisabled, "disabled=${s.browseDisabled}")
 }

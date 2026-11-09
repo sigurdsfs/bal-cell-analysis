@@ -6,12 +6,12 @@ import java.util.concurrent.CountDownLatch
 def F = new File("C:/Users/Labsfs/Desktop/Mathilde/Mathilde Data/qupath_scripts/qupath_bal_gui.groovy")
 def stubbed = F.text.replace(".showAndWait()", ".with { Optional.empty() }")
 def prefs = Preferences.userRoot().node("bal_segmentation")
-def tasks = ["Segment cells", "Prepare training regions",
+def tasks = ["Segment cells", "Pair soma + nuclei into cells", "Prepare training regions",
              "Export corrections to training corpus", "Train model on corrected regions",
              "Classify cells: explore (no labels yet)", "Classify cells: train classifier",
              "Classify cells: predict", "Export labelled cells (segmentation + classifier)"]
-def models = ["cyto3 cells + InstanSeg nuclei", "Cellpose cyto3 (whole cells)",
-              "Cellpose-SAM (cpsam)", "InstanSeg: brightfield nuclei", "Custom Cellpose model..."]
+def models = ["Cellpose cyto3 (whole cells)", "Cellpose cyto2 (whole cells)",
+              "Cellpose-SAM (cpsam)", "Custom Cellpose model..."]
 try { Platform.startup({ } as Runnable) } catch (IllegalStateException e) { }
 
 int pass = 0, fail = 0
@@ -30,4 +30,4 @@ tasks.each { t -> models.each { mo ->
 }}
 println "\n${pass} combinations OK, ${fail} failed"
 // leave the prefs in a sensible state
-prefs.put("task", "Segment cells"); prefs.put("model", "cyto3 cells + InstanSeg nuclei"); prefs.flush()
+prefs.put("task", "Segment cells"); prefs.put("model", "Cellpose cyto3 (whole cells)"); prefs.flush()

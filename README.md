@@ -1,7 +1,7 @@
 # BAL cell segmentation and classification
 
 Automated counting and typing of immune cells in bronchoalveolar lavage (BAL) cytology,
-built around QuPath with Cellpose, InstanSeg and a pathology vision transformer.
+built around QuPath with Cellpose and a pathology vision transformer.
 
 The slide is `SFS/Image_BAL_#2.vsi`, series **40x_BF_01**: 55481 x 52623 px at
 **0.137 µm/px** (7.6 x 7.2 mm), May-Grünwald–Giemsa stained. A converted copy lives in
@@ -65,8 +65,7 @@ Two conda environments, because cellpose 3 and 4 cannot coexist:
 Both live under `C:/Users/Labsfs/AppData/Local/miniconda3/envs/`. The scripts find them
 automatically and also look under a second Windows account (`lababr`), which has its own copies.
 
-GPU: NVIDIA RTX A2000 12 GB. Cellpose uses it; **InstanSeg runs on CPU** because QuPath
-downloaded the CPU build of PyTorch.
+GPU: NVIDIA RTX A2000 12 GB; Cellpose uses it for both the soma and the nucleus pass.
 
 ---
 
@@ -105,15 +104,25 @@ runs. (Hard links were tried first and silently went stale — see CLAUDE.md.)
 ```
      segment                    measure                     classify
   ┌───────────┐            ┌──────────────┐           ┌────────────────┐
-  │  cyto3    │  cells     │ 12 notebook  │ features  │  Phikon-v2     │  cell type
+  │  cyto3    │  soma      │ 12 notebook  │ features  │  Phikon-v2     │  cell type
   │  +        │──────────▶ │ features +   │─────────▶ │  embeddings +  │──────────▶
-  │ InstanSeg │  nuclei    │ nucleus/cyto │           │  logistic reg. │
+  │  nuclei   │  nuclei    │ nucleus/cyto │           │  logistic reg. │
   └───────────┘            └──────────────┘           └────────────────┘
 ```
 
-**Default model: `cyto3` cells + InstanSeg nuclei, paired into QuPath cell objects.**
+**Default: `cyto3` soma outlines with Cellpose's `nuclei` model paired inside them.**
 Pairing gives a true `nc_ratio`, nuclear shape on its own, and cytoplasm colour with the
 nucleus excluded — the features that actually separate BAL cell types.
+
+The soma model (cyto2 / cyto3 / cpsam / a fine-tune) and the optional nucleus pass are
+chosen separately: they are different targets with their own ground truth, kept in
+`<corpus>/train|test` and `<corpus>/nuclei/train|test`. Both go through the same
+correct → export → fine-tune loop, which is why nuclei come from Cellpose and not
+InstanSeg — InstanSeg cannot be trained from QuPath.
+
+**`Output type = Cells` is only offered when the nucleus pass is on.** Without a real
+nucleus, QuPath's inner boundary is the soma and the outer an invented ring, which turns
+`nc_ratio` into a function of cell diameter running backwards against the real one.
 
 ### Measurements per cell
 
@@ -139,7 +148,7 @@ Keep these in mind before optimising anything.
 | Throughput | ~0.45 MP/s, flat across tile sizes |
 | Tissue masking saving | only ~28% (cells are sparse but scattered) |
 | Half resolution | 4x faster, counts did not drop (unverified visually) |
-| InstanSeg nuclei | 2 s per region on CPU |
+
 | Phikon-v2 embedding | ~1 s per 60 cells on GPU |
 
 ---

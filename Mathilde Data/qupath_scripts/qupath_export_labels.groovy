@@ -68,13 +68,33 @@ if (regions.isEmpty()) {
     return
 }
 
-// The masks must contain EVERY cell, so the filter excludes only the region rectangles.
-// This is the whole point: a classified cell still counts as a cell.
+// WHICH TARGET: soma outlines or nuclei. They are two training sets over the same pixels,
+// so they get separate masks and separate corpus folders -- point one trainer at both and
+// it learns an average of "cell" and "nucleus", which is worse than either.
+// Soma ground truth stays at <corpus>/train|test so the hand-corrected data already there
+// keeps working; nuclei go in <corpus>/nuclei/train|test.
+def TARGET = binding.hasVariable('BAL_EXPORT_TARGET') ? BAL_EXPORT_TARGET.toString().toUpperCase() : 'SOMA'
+def NUCLEUS_CLASS = "Nucleus"
+def REGION_CLASSES = ["Training", "Validation"]
+def CORPUS_ROOT = TARGET == 'NUCLEI' ? new File(CORPUS, "nuclei") : CORPUS
+
+/** Is this annotation part of the target we are exporting? */
+def isTargetObject = { PathObject o ->
+    def c = o.getPathClass()?.toString()
+    if (c in REGION_CLASSES) return false
+    // A nucleus annotation sits INSIDE a soma annotation. Letting it into the soma mask
+    // would add a second, smaller object on top of every cell and quietly poison the
+    // corpus, so each target takes only its own objects.
+    TARGET == 'NUCLEI' ? c == NUCLEUS_CLASS : c != NUCLEUS_CLASS
+}
+
+// The masks must contain EVERY object of the target, classified or not: a cell you called
+// "Macrophage" is still a cell. Only the region rectangles and the other target are left out.
 def labelServer = new LabeledImageServer.Builder(imageData)
         .backgroundLabel(0, ColorTools.BLACK)
         .multichannelOutput(false)
         .useInstanceLabels()
-        .useFilter({ PathObject o -> !(o.getPathClass()?.toString() in ["Training", "Validation"]) })
+        .useFilter({ PathObject o -> isTargetObject(o) })
         .build()
 
 double downsample = PIXEL_SIZE_UM / server.getPixelCalibration().getAveragedPixelSizeMicrons()
@@ -89,15 +109,14 @@ regions.eachWithIndex { region, idx ->
     boolean isValidation = region.getPathClass().toString() == "Validation"
     def request = RegionRequest.createInstance(server.getPath(), downsample, roi)
 
-    // Every annotation inside this rectangle, whatever its class.
+    // Every annotation of this target inside the rectangle, whatever its cell-type class.
     def cells = getAnnotationObjects().findAll { a ->
-        a != region && !(a.getPathClass()?.toString() in ["Training", "Validation"]) &&
-                roi.getGeometry().intersects(a.getROI().getGeometry())
+        a != region && isTargetObject(a) && roi.getGeometry().intersects(a.getROI().getGeometry())
     }
 
     // --- segmentation ground truth -------------------------------------------
     if (WHAT in ['BOTH', 'SEGMENTATION']) {
-        def dir = new File(CORPUS, isValidation ? "test" : "train")
+        def dir = new File(CORPUS_ROOT, isValidation ? "test" : "train")
         dir.mkdirs()
         def base = "${tag}_region_${idx}"
         try {
@@ -112,7 +131,7 @@ regions.eachWithIndex { region, idx ->
     }
 
     // --- classifier crops ------------------------------------------------------
-    if (WHAT in ['BOTH', 'CLASSIFIER']) {
+    if (WHAT in ['BOTH', 'CLASSIFIER'] && TARGET != 'NUCLEI') {
         cells.findAll { it.getPathClass() != null && !(it.getPathClass().toString() in NON_CELL_CLASSES) }
              .each { cell ->
             def cls = cell.getPathClass().toString()
@@ -151,7 +170,7 @@ if (WHAT in ['BOTH', 'CLASSIFIER'] && cropsWritten > 0) {
 println ""
 println "=== export complete ==="
 if (WHAT in ['BOTH', 'SEGMENTATION'])
-    println "  segmentation: ${segWritten} region(s) written to ${CORPUS}"
+    println "  segmentation: ${segWritten} ${TARGET.toLowerCase()} region(s) written to ${CORPUS_ROOT}"
 if (WHAT in ['BOTH', 'CLASSIFIER']) {
     println "  classifier:   ${cropsWritten} crop(s) written to ${new File(CLASSIFY_DIR, 'crops')}"
     classCounts.sort { -it.value }.each { cls, n -> println "      ${n}  ${cls}" }
