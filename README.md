@@ -89,6 +89,8 @@ Mathilde/
 └── Mathilde Data/
     ├── qupath_scripts/          ALL QuPath scripts live here (the single source)
     │   ├── bal_config.groovy    every machine-specific path, in one place
+    │   ├── bal_regions.groovy   which region owns a cell at a boundary
+    │   ├── bal_crops.groovy     how a cell becomes a crop for the classifier
     │   └── tests/               harnesses -- run these after changing anything
     ├── bal_classify/            the Python classifier and its outputs
     ├── cellpose_ground_truth/   shared training corpus (image/mask pairs), ~8 GB
@@ -151,6 +153,11 @@ Keep these in mind before optimising anything.
 | Throughput | ~0.45 MP/s, flat across tile sizes |
 | Tissue masking saving | only ~28% (cells are sparse but scattered) |
 | Half resolution | 4x faster, counts did not drop (unverified visually) |
+| Cells cut by a block edge, unpadded | 2.8% at 4096 px blocks, 5.6% at 2048, 11.0% at 1024 |
+| Edge-cut bias | 2.9x more likely for the largest macrophage than for a lymphocyte |
+| Tissue blocks, 4096 px, unpadded | 136 blocks, 2176 tiles, ~109 min |
+| Same, padded and refitted to 3804 px | 162 blocks, 2592 tiles, ~130 min, ~0% cut |
+| Cost of forgetting to refit | 3400 tiles, ~170 min for the same result |
 
 | Phikon-v2 embedding | ~1 s per 60 cells on GPU |
 
@@ -161,8 +168,12 @@ Keep these in mind before optimising anything.
 - **The stain has no orange/red component anywhere on the slide.** Eosinophils cannot be
   identified by colour here; only by nuclear shape. Worth confirming the Giemsa buffer pH
   with the lab before publishing a differential count.
-- **QuPath clips cells at region borders**, so small regions over-count partial cells
-  (~11% at 1024 px). Negligible on large regions.
+- **A cell crossing a region border is now segmented whole**, not clipped to the border and
+  then measured as if whole. Each region is padded so Cellpose can see past its edge, and
+  each cell goes to the one region holding its centroid. Two things this does *not* cover:
+  a cell whose centroid lands in a block skipped as glass is still lost, and a classifier
+  crop at a region edge still keeps its neighbours, since neighbours outside the region were
+  never segmented and so cannot be painted out.
 - **No expert-confirmed cell labels exist yet.** Every cell-type statement so far is
   measurement-backed inference, not cytopathology.
 - **Fine-tuning has not yet beaten stock cyto3.** The one apparent win turned out to be a

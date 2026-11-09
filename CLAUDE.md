@@ -49,6 +49,7 @@ The harnesses live in `Mathilde Data/qupath_scripts/tests/`. Run with:
 | `test_prune2.groovy` | checkpoint pruning, including the log being wiped mid-run |
 | `test_summary2.groovy` | training-loss verdicts against synthetic curves |
 | `test_corpus_multislide.groovy` | corpus prefixing, per-slide counts, train/test overlap |
+| `test_region_boundary.groovy` | a cell crossing a region edge: kept **whole**, owned by **one** region, and never claimed away from a Training rectangle (needs no project) |
 | `test_notebook_parity.groovy` | **QuPath vs the notebook** on the benchmark region (needs a project) |
 
 **JavaFX initialises headlessly here.** `Platform.startup{}`, then evaluate the GUI script
@@ -92,7 +93,10 @@ qupath_bal_gui.groovy
 └── qupath_batch_slides.groovy          the whole pipeline over every image in a project
         └── bal_classify/embed_cells.py + classify_cells.py
 
-Shared, evaluated rather than run: `bal_config.groovy` (paths and settings) and
+Shared, evaluated rather than run: `bal_config.groovy` (paths and settings),
+`bal_regions.groovy` (**which region owns a cell at a boundary**, and how large a padded
+tissue block may be — used by `qupath_cellpose_detection.groovy` and
+`qupath_tissue_annotation.groovy`) and
 `bal_crops.groovy` (**how a cell becomes a crop** — used by both
 `qupath_export_cells.groovy`, which cuts the crops the classifier is applied to, and
 `qupath_export_labels.groovy`, which cuts the ones it is trained on).
@@ -155,6 +159,29 @@ files parsed fine on their own. `test_pre_combination.groovy` compiles every pai
 
 - **It tiles each annotation's BOUNDING BOX**, not its shape. A scattered tissue outline is
   therefore no cheaper than the whole slide.
+- **`constrainToParent` defaults to TRUE, which CLIPS every cell to the region edge** and
+  keeps it — a half cell enters the data as a whole cell with a truncated area, diameter and
+  `nc_ratio`, and nothing marks it. `build()` also forces `padding` to 0 whenever it is true,
+  so the only way to get the padding is the two-argument `constrainToParent(false, padUm)`.
+  Do **not** reach for `excludeEdges()`: all it does is set `constrainToParent = true`, and
+  `Cellpose2D` has no `excludeEdges` field at all.
+- **Padding the region is only half the fix — alone it DOUBLES every edge cell**, because
+  both neighbours then see it and each produces a whole copy. `bal_regions.groovy` gives each
+  cell to the region holding its centroid. Blocks tile the slide without overlapping, so
+  centroids partition it exactly.
+- **Padding is tiled too, so it costs a whole extra row AND column of tiles** unless the
+  padded extent lands on the tile grid. Measured on this slide: 4096 px blocks + 146 px of
+  padding = 25 tiles per block, 3400 tiles, 170 min; refit the block to 3804 and it is 16
+  tiles per block, 2592 tiles, 130 min, against 2176 tiles / 109 min unpadded. So the fix
+  costs 19%, and forgetting to refit costs 56%. `fitBlockSize` does the refit;
+  `qupath_tissue_annotation.groovy` calls it. **Padding also inverts the old block-size
+  advice**: small blocks each pay for their own ring, so 1756 px blocks + padding came to
+  2868 tiles — worse than segmenting the whole slide.
+- **Tile overlap is `diameter × 2`, or 60 px when no diameter is given** — which is the cpsam
+  path, since cpsam is scale-free and gets diameter 0. Each tile is grown by `overlap` on
+  every side, so a cell is whole in some tile only while its bounding box is ≤ 2 × overlap.
+  At 120 px that loses an estimated 0.36% of cells here; `.setOverlap(116)` removes it for
+  21% more pixels per tile. Not currently enabled.
 - **Training reads each image's SAVED data.** Unsaved rectangles produce
   "Found 0 Training objects" and then `ERROR: no files in --dir folder`.
 - **Ground truth = rectangle classed `Training`/`Validation`.** The extension's own exporter
@@ -249,6 +276,15 @@ files parsed fine on their own. `test_pre_combination.groovy` compiles every pai
   corpora over the same pixels — soma at `<corpus>/train|test`, nuclei at
   `<corpus>/nuclei/train|test`. Letting a nucleus into a soma mask puts a second, smaller
   object inside every cell and poisons the corpus with no error anywhere.
+- **Never "solve" a boundary by dropping the cells that touch it.** The chance of touching a
+  4096 px block edge grows with the cell, because a bigger cell reaches further past the
+  line: 2.8% for a 58 px lymphocyte, 5.0% for the 103 px median cell, 8.3% for the largest
+  173 px macrophage. Excluding edge-touching cells therefore removes **2.9x as many
+  macrophages as lymphocytes** and tilts the differential count, which is the one number
+  this pipeline exists to produce. Recover the cell instead.
+- **A Training/Validation region is a counting frame's opposite.** Ownership rules must not
+  apply to it: a cell whose pixels are in a ground-truth mask but whose label was dropped is
+  taught to Cellpose as background. `bal_regions.groovy` keeps everything that reaches one.
 - **Always run the diameter-matched control before claiming a fine-tune helped.** Stock cyto3
   at diameter 98 matched the "improved" fine-tuned model exactly — the gain was scale, not learning.
 - **Check which field of view a measurement came from.** The overview series covers the whole

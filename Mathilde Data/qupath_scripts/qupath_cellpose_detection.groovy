@@ -29,11 +29,15 @@ import qupath.ext.biop.cellpose.CellposeSetup
 // Machine-specific paths come from bal_config.groovy (with bal_config.local.groovy
 // overriding it); the literals below are only a fallback for running this file alone.
 def CFG = [:]
+def balScriptDir = null
 try {
     def cfgFile = [new File(System.getProperty("user.home") + "/QuPath/v0.7/scripts", "bal_config.groovy"),
                    new File("C:/Users/Labsfs/Desktop/Mathilde/Mathilde Data/qupath_scripts", "bal_config.groovy")]
             .find { it.exists() }
-    if (cfgFile != null) CFG = evaluate(cfgFile) ?: [:]
+    if (cfgFile != null) {
+        CFG = evaluate(cfgFile) ?: [:]
+        balScriptDir = cfgFile.getParentFile()        // also where bal_regions.groovy lives
+    }
 } catch (Exception ignored) { }
 
 
@@ -86,6 +90,18 @@ def MODEL                = binding.hasVariable('BAL_MODEL')             ? BAL_MO
 // cyto2/cyto3 are scale-sensitive and need the cell diameter in pixels (0 = let cellpose guess).
 // Measured on this slide: median cell diameter is 58 px at 0.137 um/px.
 double DIAMETER          = binding.hasVariable('BAL_DIAMETER')          ? BAL_DIAMETER as double       : 0
+// How far OUTSIDE each region Cellpose is allowed to look, in microns.
+// WHY: the extension clips every detection to its parent annotation, so a cell crossing the
+// region edge used to be kept as a whole cell with a truncated area, diameter and nc_ratio.
+// With padding the region is grown, nothing is clipped, and the ownership pass below hands
+// each cell to the one region holding its centroid -- so edge cells come out whole and are
+// counted exactly once. 0 restores the old clipping behaviour. See bal_regions.groovy.
+double REGION_PAD_UM     = binding.hasVariable('BAL_REGION_PAD_UM')     ? BAL_REGION_PAD_UM as double  : (CFG.regionPadUm ?: 20) as double
+// Set false to keep everything the padded pass produced, duplicates and all. The nucleus
+// half of qupath_cells_with_nuclei.groovy does this: nuclei are matched to a soma by
+// centroid-in-soma straight afterwards, and a nucleus whose own centroid fell outside the
+// region would otherwise be thrown away before its soma could claim it.
+boolean REGION_OWNERSHIP = binding.hasVariable('BAL_REGION_OWNERSHIP')  ? BAL_REGION_OWNERSHIP as boolean : true
 
 // --- build the detector -------------------------------------------------
 // Which environment a model needs depends on what it was trained FROM, which cannot be read
@@ -102,9 +118,21 @@ if (!isSAM && legacyPython == null) {
 def builder = Cellpose2D.builder(MODEL)
         .pixelSize(PIXEL_SIZE_UM)                      // um/px, from the VSI's own OME metadata (40x_BF_01)
         .tileSize(TILE_SIZE)                           // matches the notebook's tile size / measured throughput
-//        .setOverlap(60)                               // default is 60px; raise if large cells are getting split at tile edges
+// Overlap between the extension's own internal tiles. The builder's default is diameter x 2,
+// or 60 px when no diameter is given -- which is the cpsam path here, since cpsam is
+// scale-free and gets diameter 0. Each tile is grown by `overlap` on every side, so a cell
+// is whole in at least one tile only while its bounding box is <= 2 x overlap (120 px at the
+// default). Cells here reach 173 px, but a cell has to land on a seam to be at risk, which
+// works out at 0.36% of cells; raising this to 116 removes it for 21% more pixels per tile.
+//        .setOverlap(116)
 //        .normalizePercentilesGlobal(1, 99, 10)        // try this if detections look sparse vs. the notebook's own run
         .measureShape()                                // adds shape measurements comparable to the notebook's regionprops features
+
+// Let Cellpose see past the region edge instead of clipping cells to it. This is the
+// extension's own feature, and the two-argument form matters: build() forces padding to 0
+// whenever constrainToParent is true, so the padding only survives if clipping is off.
+if (REGION_PAD_UM > 0)
+    builder.constrainToParent(false, REGION_PAD_UM)
 
 if (isSAM)
     builder.useCellposeSAM()                           // cellpose 4.x model, matches the notebook pipeline
@@ -141,10 +169,88 @@ if (pathObjects.isEmpty()) {
     return
 }
 
+// --- what the padding costs ----------------------------------------------
+// The extension tiles the PADDED bounding box on a fixed grid, so padding that pushes a
+// region one pixel over a multiple of the tile size buys a whole extra row AND column of
+// tiles. Worth saying out loud, because the fix is to shrink the block, not the padding.
+if (REGION_PAD_UM > 0) {
+    double calUm = imageData.getServer().getPixelCalibration().getAveragedPixelSizeMicrons() ?: PIXEL_SIZE_UM
+    int padPx = (int) Math.round(REGION_PAD_UM / (calUm ?: PIXEL_SIZE_UM))
+    long bare = 0, padded = 0
+    pathObjects.each { r ->
+        def roi = r.getROI()
+        if (roi == null) return
+        double w = roi.getBoundsWidth(), h = roi.getBoundsHeight()
+        bare += Math.ceil(w / TILE_SIZE) * Math.ceil(h / TILE_SIZE)
+        padded += Math.ceil((w + 2 * padPx) / TILE_SIZE) * Math.ceil((h + 2 * padPx) / TILE_SIZE)
+    }
+    println "Region padding: ${REGION_PAD_UM} um (${padPx} px) -- cells may extend past the region edge."
+    if (padded > bare * 1.1 && bare > 0) {
+        println String.format("  NOTE: the padding adds %d tiles to %d (%.0f%% more work) because the padded",
+                padded - bare, bare, 100.0 * (padded - bare) / bare)
+        println "  regions no longer fit the ${TILE_SIZE} px tile grid. Shrink the blocks instead of the"
+        println "  padding -- qupath_tissue_annotation.groovy sizes them to fit automatically."
+    }
+}
+
+// Remember what was already there, so the ownership pass below only judges this run's work.
+def beforeByRegion = [:]
+pathObjects.each { r ->
+    def seen = Collections.newSetFromMap(new IdentityHashMap())
+    seen.addAll(r.getChildObjects())
+    beforeByRegion[r] = seen
+}
+
 cellpose.detectObjects(imageData, pathObjects)
 
 // Count only what this run produced, i.e. objects inside the regions we processed.
-int produced = pathObjects.sum { it.getChildObjects().size() } ?: 0
+def newByRegion = [:]
+pathObjects.each { r ->
+    def seen = beforeByRegion[r]
+    newByRegion[r] = r.getChildObjects().findAll { !seen.contains(it) }
+}
+int produced = (int) (newByRegion.values().sum { it.size() } ?: 0)
+
+// --- one region per cell -------------------------------------------------
+// With the padding above, two neighbouring regions both see the cells on their shared edge
+// and each produces a whole copy. Hand every cell to the single region holding its centroid:
+// blocks tile the slide without overlapping, so centroids partition it exactly.
+def verdict = null
+if (REGION_PAD_UM > 0 && REGION_OWNERSHIP && produced > 0) {
+    def regionsLib = null
+    try {
+        def libFile = balScriptDir == null ? null : new File(balScriptDir, "bal_regions.groovy")
+        if (libFile != null && libFile.exists()) regionsLib = evaluate(libFile)
+    } catch (Exception e) {
+        println "  WARNING: bal_regions.groovy failed to load (${e.getMessage()})"
+    }
+    if (regionsLib == null) {
+        println "  WARNING: bal_regions.groovy is missing, so no region claimed its cells. A cell on"
+        println "  the edge between two regions is now in the data TWICE. Counts from this run are"
+        println "  not trustworthy -- restore the file, or set the padding to 0 to go back to clipping."
+    } else {
+        verdict = regionsLib.claimByCentroid(newByRegion)
+        if (!verdict.drop.isEmpty()) {
+            // keepChildren = true: a dropped soma must not take a nucleus with it.
+            getCurrentHierarchy().removeObjects(verdict.drop, true)
+            fireHierarchyUpdate()
+        }
+    }
+}
+
 int nCells = getCellObjects().size()
 println "Cellpose-SAM done (OUTPUT_TYPE=${OUTPUT_TYPE}): ${produced} objects created in the selected region(s)"
+if (verdict != null) {
+    int kept = verdict.claimed + verdict.groundTruth
+    println "  ${kept} kept, ${verdict.released + verdict.orphaned} dropped as belonging elsewhere:"
+    println "    ${verdict.claimed} whose centroid is inside the region that produced them"
+    if (verdict.groundTruth > 0) {
+        println "    ${verdict.groundTruth} in Training/Validation regions, kept whatever their centroid -- a cell"
+        println "      with pixels in a ground-truth mask and no label is taught to Cellpose as background"
+    }
+    if (verdict.released > 0)
+        println "    ${verdict.released} claimed by a neighbouring region in this run (it has its own whole copy)"
+    if (verdict.orphaned > 0)
+        println "    ${verdict.orphaned} centred outside every region, i.e. found in the padding ring"
+}
 println "  totals now -- annotations: ${getAnnotationObjects().size()}, detections: ${getDetectionObjects().size()}, of which cell objects: ${nCells}"

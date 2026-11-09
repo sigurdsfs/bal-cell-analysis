@@ -38,6 +38,12 @@ def cfg = [
     pixelSizeUm     : 0.137,
     // Median cell diameter measured on this slide; cyto2/cyto3 need it, cpsam ignores it.
     cellDiameterPx  : 58,
+    // How far outside each region Cellpose may look, so a cell crossing the region edge is
+    // segmented whole instead of being clipped to the edge. A cell this script KEEPS has its
+    // centroid inside the region, so it reaches at most half its own width outwards --
+    // 87 px = 12 um for the largest cell measured here (173 px). 20 um leaves margin.
+    // Set 0 to go back to clipping. See bal_regions.groovy for why clipping was the problem.
+    regionPadUm     : 20,
 
     // --- Classifier crops ------------------------------------------------------
     // The window the transformer sees around each cell, in full-resolution pixels.

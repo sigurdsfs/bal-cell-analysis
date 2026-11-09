@@ -287,6 +287,9 @@ corpusRow.add(corpusField, 0, 0)
 corpusRow.add(corpusBrowse, 1, 0)
 GridPane.setHgrow(corpusField, Priority.ALWAYS)
 def tileField = new TextField(prefs.get("tileSize", "1024"))
+// How far outside each region Cellpose may look, so a cell crossing the region edge is
+// segmented whole rather than clipped to the edge and then measured as a whole cell.
+def regionPadField = new TextField(prefs.get("regionPadUm", "20"))
 def expansionField = new TextField(prefs.get("expansion", "2.0"))
 def featuresCheck = new CheckBox("Measure the notebook's 12 features per cell")
 featuresCheck.setSelected(prefs.getBoolean("features", true))
@@ -357,7 +360,7 @@ def syncEnabled = {
                          "measurements and object ID all survive.")
 
     // segmentation-only
-    [outputBox, regionBox, featuresCheck, clumpCheck, tileField].each { it.setDisable(!segmenting) }
+    [outputBox, regionBox, featuresCheck, clumpCheck, tileField, regionPadField].each { it.setDisable(!segmenting) }
     // The nucleus pass belongs to segmentation; pairing uses the models only to describe
     // what it is matching, so the fields stay off there.
     nucleiCheck.setDisable(!segmenting)
@@ -414,8 +417,8 @@ def syncEnabled = {
     // its settings are irrelevant here. The model row itself is switched off at the END of
     // this closure: the model-description lines below would overwrite the explanation.
     if (classifying || exportLabels || converting) {
-        [outputBox, regionBox, featuresCheck, clumpCheck, tileField, expansionField, clumpField,
-         pixelField, diameterField].each { it.setDisable(true) }
+        [outputBox, regionBox, featuresCheck, clumpCheck, tileField, regionPadField, expansionField,
+         clumpField, pixelField, diameterField].each { it.setDisable(true) }
     }
 
     def m = MODELS[modelBox.getValue()]
@@ -594,6 +597,7 @@ addTo(segGrid, "Cell expansion (um):", expansionField)
 def resGrid = newGrid()
 addTo(resGrid, "Pixel size (um/px):", pixelField)
 addTo(resGrid, "Tile size (px):", tileField)
+addTo(resGrid, "Region padding (um):", regionPadField)
 addTo(resGrid, "Cell diameter (px):", diameterField)
 
 def measGrid = newGrid()
@@ -701,11 +705,16 @@ def parseRegions = { TextField f, String name ->
 
 def task = taskBox.getValue()
 double pixelSize, tileSize, expansion, clumpArea, epochs, learningRate, trainSize, weightDecay
+double regionPadUm
 double nucleusDiameter
 def trainRegions = [], valRegions = []
 try {
     pixelSize = asNumber(pixelField, "Pixel size", 0.001, 10)
     tileSize = asNumber(tileField, "Tile size", 64, 4096)
+    // 0 means "clip to the region", the old behaviour. The upper bound is deliberately
+    // modest: padding is read and segmented pixels, and a pad wider than a tile would mean
+    // every region costs an extra ring of tiles for cells that are then thrown away.
+    regionPadUm = asNumber(regionPadField, "Region padding", 0, 100)
     expansion = asNumber(expansionField, "Cell expansion", 0, 100)
     clumpArea = clumpCheck.isSelected() ? asNumber(clumpField, "Clump area", 1, 1_000_000) : 0
     // Upper bound is the cell diameter's: a "nucleus" larger than a cell is a typo.
@@ -785,6 +794,7 @@ prefs.put("output", outputBox.getValue())
 prefs.put("region", regionBox.getValue())
 prefs.put("pixelSize", pixelField.getText()); prefs.put("diameter", diameterField.getText())
 prefs.put("tileSize", tileField.getText())
+prefs.put("regionPadUm", regionPadField.getText())
 prefs.put("expansion", expansionField.getText())
 prefs.putBoolean("features", featuresCheck.isSelected())
 prefs.putBoolean("clumpOn", clumpCheck.isSelected())
@@ -812,6 +822,7 @@ BAL_OUTPUT_TYPE = [Detections: 'DETECTION', Annotations: 'ANNOTATION', Cells: 'C
 BAL_TARGETS = regionBox.getValue().startsWith("Selected") ? 'SELECTED' : 'ALL_ANNOTATIONS'
 BAL_PIXEL_SIZE_UM = pixelSize
 BAL_TILE_SIZE = tileSize as int
+BAL_REGION_PAD_UM = regionPadUm
 BAL_CELL_EXPANSION_UM = expansion
 BAL_CLUMP_AREA_UM2 = clumpArea
 

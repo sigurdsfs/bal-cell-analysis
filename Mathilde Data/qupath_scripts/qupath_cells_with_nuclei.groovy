@@ -105,6 +105,8 @@ if (PAIR_SOURCE == 'ANNOTATIONS') {
     BAL_DIAMETER = CELL_MODEL == 'cpsam' ? 0 : DIAMETER
     BAL_OUTPUT_TYPE = 'DETECTION'
     BAL_TARGETS = 'SELECTED'
+    // The soma pass owns the region: one cell, one region, decided by its centroid.
+    BAL_REGION_OWNERSHIP = true
     evaluate(PRE + new File(scriptDir, "qupath_cellpose_detection.groovy").text)
     somaObjects = regions.collectMany { r -> r.getChildObjects().collect { it } }
     println "  ${somaObjects.size()} soma"
@@ -119,6 +121,12 @@ if (PAIR_SOURCE == 'ANNOTATIONS') {
     BAL_MODEL_IS_SAM = NUCLEUS_MODEL.toLowerCase().contains("cpsam")
     BAL_OUTPUT_TYPE = 'DETECTION'
     BAL_TARGETS = 'SELECTED'
+    // Keep every nucleus the padded pass found, including those centred outside the region.
+    // A soma kept by the ownership pass straddles the edge, and its nucleus can sit on the
+    // far side of that line -- claiming nuclei by region first would strip the nucleus off
+    // exactly the cells this change exists to rescue. Pairing below discards the rest
+    // anyway, since a nucleus is only kept when some soma's outline contains its centroid.
+    BAL_REGION_OWNERSHIP = false
     evaluate(PRE + new File(scriptDir, "qupath_cellpose_detection.groovy").text)
     nucRois = regions.collectMany { r -> r.getChildObjects().collect { it.getROI() } }
     println "  ${nucRois.size()} nuclei"
