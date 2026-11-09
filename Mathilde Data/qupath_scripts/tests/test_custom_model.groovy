@@ -18,7 +18,7 @@ def F = new File("C:/Users/Labsfs/Desktop/Mathilde/Mathilde Data/qupath_scripts/
 def SRC = F.text.replace("\r\n", "\n")
 // Report the control states at the moment the dialog would have been shown.
 def stubbed = SRC.replace(".showAndWait()",
-        ".with { REPORT(modelDesc, diameterField, modelBrowse, customModel, lrField, sgdCheck); Optional.empty() }")
+        ".with { REPORT(modelDesc, diameterField, modelBrowse, customModel, lrField, sgdCheck, modelBox); Optional.empty() }")
 
 def prefs = Preferences.userRoot().node("bal_segmentation")
 def savedModel = prefs.get("model", "cyto3 cells + InstanSeg nuclei")
@@ -42,13 +42,14 @@ def run = { String task, String model, String customPath ->
     def seen = [:]
     def err = null
     def binding = new Binding()
-    binding.setVariable("REPORT", { desc, diam, browse, custom, lr, sgd ->
+    binding.setVariable("REPORT", { desc, diam, browse, custom, lr, sgd, box ->
         seen.desc = desc.getText()
         seen.diameterDisabled = diam.isDisabled()
         seen.browseDisabled = browse.isDisabled()
         seen.custom = custom?.getName()
         seen.lr = lr.getText()
         seen.sgd = sgd.isSelected()
+        seen.modelBoxDisabled = box.isDisabled()
     })
     Platform.runLater({
         try {
@@ -108,6 +109,22 @@ println "\n=== Browse stays off for the built-in models ==="
  "InstanSeg: brightfield nuclei"].each { mo ->
     def s = run("Segment cells", mo, samModel.getAbsolutePath())
     check("Browse disabled for '${mo}'", s.browseDisabled, "disabled=${s.browseDisabled}")
+}
+
+println ""
+println "=== tasks that do not segment switch the model row off ==="
+["Classify cells: explore (no labels yet)", "Classify cells: train classifier",
+ "Classify cells: predict", "Export labelled cells (segmentation + classifier)"].each { t ->
+    def x = run(t, "Cellpose cyto3 (whole cells)", samModel.getAbsolutePath())
+    check("model dropdown disabled for '${t.take(34)}'", x.modelBoxDisabled,
+            "disabled=${x.modelBoxDisabled}")
+    check("...and it says why", x.desc?.contains("no segmentation model is"),
+            "${x.desc?.take(70)}")
+}
+["Segment cells", "Prepare training regions", "Train model on corrected regions"].each { t ->
+    def x = run(t, "Cellpose cyto3 (whole cells)", samModel.getAbsolutePath())
+    check("model dropdown still live for '${t.take(34)}'", !x.modelBoxDisabled,
+            "disabled=${x.modelBoxDisabled}")
 }
 
 // --- the selection itself -----------------------------------------------------

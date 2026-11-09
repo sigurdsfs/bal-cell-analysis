@@ -283,12 +283,11 @@ def syncEnabled = {
     classifierField.setDisable(!(clsTrain || clsPredict)); classifierBrowse.setDisable(!(clsTrain || clsPredict))
     reuseCheck.setDisable(!classifying)
     // Classification works on whatever cells already exist, so the segmentation model and
-    // its settings are irrelevant here.
+    // its settings are irrelevant here. The model row itself is switched off at the END of
+    // this closure: the model-description lines below would overwrite the explanation.
     if (classifying || exportLabels) {
         [outputBox, regionBox, featuresCheck, clumpCheck, tileField, expansionField, clumpField,
          pixelField, diameterField].each { it.setDisable(true) }
-        modelDesc.setText("Classification uses the cells already in the image -- the segmentation\n" +
-                          "model above is not used. Run a segmentation first if there are none.")
     }
 
     def m = MODELS[modelBox.getValue()]
@@ -332,6 +331,17 @@ def syncEnabled = {
     if ((preparing || training) && !classifying && m?.engine != 'cellpose')
         modelDesc.setText((m?.desc ?: "") + "\n\nThis task needs a plain Cellpose model " +
                 "(cyto3, cyto2, cpsam or a custom one).")
+
+    // LAST, so the description survives: these tasks never segment anything, they act on the
+    // cells already in the image, so the whole model row is switched off rather than left
+    // looking like a choice that matters.
+    modelBox.setDisable(classifying || exportLabels)
+    if (classifying || exportLabels) {
+        modelBrowse.setDisable(true)
+        modelDesc.setText("Works on the cells already in the image -- no segmentation model is\n" +
+                          "used here. Segment first if the image has no cells yet.\n" +
+                          "Every cell in the image is included; there is no per-region selection.")
+    }
 }
 def chooseCustomModel = {
     def f = pickCustomModel()
