@@ -215,6 +215,12 @@ def predict(args):
     trained_style = bundle.get("crop_style", "unknown")
     here_style = (str(df.crop_style.iloc[0]) if "crop_style" in df.columns
                   and df.crop_style.notna().any() else "unknown")
+    if trained_style == "unknown":
+        # Saved before crops recorded their style -- i.e. cut with the neighbouring cells
+        # still in them. It will predict, but on a different kind of picture than it saw.
+        print("WARNING: this classifier does not say how its crops were made, so it predates"
+              "\n  the neighbour painting. Retrain it ('train on labelled corpus') before"
+              "\n  trusting these predictions.")
     if "unknown" not in (trained_style, here_style) and trained_style != here_style:
         raise SystemExit(
             f"crop style mismatch: the classifier was trained on '{trained_style}' crops but "
