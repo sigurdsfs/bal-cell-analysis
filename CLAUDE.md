@@ -40,6 +40,7 @@ The harnesses live in `Mathilde Data/qupath_scripts/tests/`. Run with:
 | `test_api_calls.groovy` | every `Dialogs.*` / `FileChoosers.*` call actually exists |
 | `test_custom_model.groovy` | a custom model is known at *selection* time: diameter, training defaults, Browse |
 | `test_config_block.groovy` | every script that reads `CFG` declares it **in its own body**, before use |
+| `test_pre_combination.groovy` | every `PRE` + worker pair compiles **as one script**, which is how it runs |
 | `test_nucleus_pass.groovy` | the nucleus pass, and that `Output type = Cells` needs it |
 | `test_layout_sections.groovy` | each task opens exactly the collapsible sections it uses |
 | `test_export_labels.groovy` | classified cells stay in the masks; soma and nucleus corpora stay separate (needs a project) |
@@ -95,6 +96,12 @@ Standalone helpers: `qupath_test_region.groovy` (benchmark regions),
 
 **`evaluate()` does not inherit QuPath's default imports.** Prepend the `PRE` block
 (see any worker-calling script) or you get `No such property: ROIs`.
+
+**`PRE` is imports and nothing else.** It is concatenated with the worker, so the two share
+one scope: a `def` in `PRE` collides with the same `def` in every worker that has it.
+`qupath_classify_cells.groovy` carried a `def CFG` in its `PRE` and the combination failed
+to compile — which is why no classify task ever reached the embedding step, while both
+files parsed fine on their own. `test_pre_combination.groovy` compiles every pair.
 
 ---
 
