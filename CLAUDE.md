@@ -41,6 +41,7 @@ The harnesses live in `Mathilde Data/qupath_scripts/tests/`. Run with:
 | `test_custom_model.groovy` | a custom model is known at *selection* time: diameter, training defaults, Browse |
 | `test_config_block.groovy` | every script that reads `CFG` declares it **in its own body**, before use |
 | `test_nucleus_pass.groovy` | the nucleus pass, and that `Output type = Cells` needs it |
+| `test_layout_sections.groovy` | each task opens exactly the collapsible sections it uses |
 | `test_export_labels.groovy` | classified cells stay in the masks; soma and nucleus corpora stay separate (needs a project) |
 | `test_prune2.groovy` | checkpoint pruning, including the log being wiped mid-run |
 | `test_summary2.groovy` | training-loss verdicts against synthetic curves |
@@ -112,6 +113,11 @@ Standalone helpers: `qupath_test_region.groovy` (benchmark regions),
 - **Scripts reach QuPath via directory junctions** (`mklink /J`). Never publish with
   hard links: Edit/Write replace the inode and the menu copy silently goes stale.
 - **Script files are CRLF.** Splitting source on `"\n\n"` fails; anchor on text.
+- **The dialog is a `ScrollPane` of `TitledPane` sections, not one grid.** It outgrew the
+  screen once and the lower half was unreachable. Add a control to a section's grid via
+  `addTo/rightTo/wideTo`, and mark the section relevant for its tasks in `groupRelevant`
+  inside `syncEnabled` — sections open and close on task change only, so a section nobody
+  claims stays shut and the control looks missing.
 - **The `def CFG` inside a `PRE` string declares nothing in the script holding it.** That
   copy is prepended to the SUB-scripts it evaluates. A worker that reads `CFG` needs its own
   block too, above the first use — `qupath_classify_cells.groovy` shipped without one and

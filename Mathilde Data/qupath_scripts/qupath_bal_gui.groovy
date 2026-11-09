@@ -17,6 +17,9 @@
 
 import javafx.application.Platform
 import javafx.geometry.Insets
+import javafx.scene.control.ScrollPane
+import javafx.scene.control.TitledPane
+import javafx.scene.layout.VBox
 import javafx.scene.control.CheckBox
 import javafx.scene.control.ComboBox
 import javafx.scene.control.Label
@@ -269,6 +272,11 @@ clumpCheck.setSelected(prefs.getBoolean("clumpOn", true))
 def clumpField = new TextField(prefs.get("clumpArea", "300"))
 clumpField.setPrefColumnCount(5)
 
+// The collapsible sections, and which of them the current task actually uses. Declared
+// here because syncEnabled fills `groupRelevant` and is defined before the panes exist.
+def groupPanes = [:]
+def groupRelevant = [:]
+
 def syncEnabled = {
     def task = taskBox.getValue()
     boolean segmenting = task == "Segment cells"
@@ -389,6 +397,16 @@ def syncEnabled = {
     // LAST, so the description survives: these tasks never segment anything, they act on the
     // cells already in the image, so the whole model row is switched off rather than left
     // looking like a choice that matters.
+    // Which sections this task uses. The task listener collapses the rest, so the dialog
+    // only ever shows the controls that do something -- it had grown taller than the screen.
+    groupRelevant["Segmentation"] = segmenting
+    groupRelevant["Resolution and tiling"] = segmenting
+    groupRelevant["Measurements"] = segmenting || pairing
+    groupRelevant["Training regions"] = preparing
+    groupRelevant["Fine-tuning"] = training
+    groupRelevant["Ground truth"] = training || exporting || exportLabels
+    groupRelevant["Classification"] = classifying
+
     modelBox.setDisable(classifying || exportLabels)
     if (classifying || exportLabels) {
         modelBrowse.setDisable(true)
@@ -461,59 +479,124 @@ featuresCheck.selectedProperty().addListener({ a, b, c -> syncEnabled() } as jav
 clumpCheck.selectedProperty().addListener({ a, b, c -> syncEnabled() } as javafx.beans.value.ChangeListener)
 syncEnabled()
 
-def pane = new GridPane()
-pane.setHgap(8); pane.setVgap(7); pane.setPadding(new Insets(12))
-int row = 0
-def addRow = { String label, javafx.scene.Node node ->
-    pane.add(new Label(label), 0, row)
-    pane.add(node, 1, row++)
-    GridPane.setHgrow(node, Priority.ALWAYS)
+// --- layout -------------------------------------------------------------------
+// One scrolling column of collapsible sections. The dialog used to be a single grid and
+// had grown taller than the screen, so the lower half (training, classification) could
+// not be reached at all on a laptop.
+def rowOf = [:]                                   // grid -> next free row
+def newGrid = {
+    def g = new GridPane()
+    g.setHgap(8); g.setVgap(7); g.setPadding(new Insets(10))
+    rowOf[g] = 0
+    g
 }
-addRow("Task:", taskBox)
-pane.add(taskDesc, 1, row++)
-pane.add(new Separator(), 0, row++, 2, 1)
-addRow("Model:", modelRow)
-pane.add(modelDesc, 1, row++)
-pane.add(nucleiCheck, 1, row++)
-addRow("Nucleus model:", nucleusRow)
-pane.add(nucleusDesc, 1, row++)
-addRow("Nucleus diameter (px):", nucleusDiameterField)
-addRow("Output type:", outputBox)
-addRow("Run on:", regionBox)
-addRow("Cell expansion (um):", expansionField)
-pane.add(new Separator(), 0, row++, 2, 1)
-addRow("Pixel size (um/px):", pixelField)
-addRow("Tile size (px):", tileField)
-addRow("Cell diameter (px):", diameterField)
-pane.add(new Separator(), 0, row++, 2, 1)
-pane.add(featuresCheck, 0, row++, 2, 1)
+def addTo = { GridPane g, String label, javafx.scene.Node node ->
+    int r = rowOf[g]
+    g.add(new Label(label), 0, r)
+    g.add(node, 1, r)
+    GridPane.setHgrow(node, Priority.ALWAYS)
+    rowOf[g] = r + 1
+}
+def rightTo = { GridPane g, javafx.scene.Node node ->      // no label, second column
+    g.add(node, 1, rowOf[g])
+    rowOf[g] = rowOf[g] + 1
+}
+def wideTo = { GridPane g, javafx.scene.Node node ->       // spans both columns
+    g.add(node, 0, rowOf[g], 2, 1)
+    rowOf[g] = rowOf[g] + 1
+}
+def section = { String title, GridPane g ->
+    def tp = new TitledPane(title, g)
+    tp.setAnimated(false)                         // instant, so the dialog does not jump
+    groupPanes[title] = tp
+    tp
+}
+
+// Task sits outside the sections: it decides what everything else means, so it is always
+// visible however much is collapsed.
+def taskGrid = newGrid()
+addTo(taskGrid, "Task:", taskBox)
+rightTo(taskGrid, taskDesc)
+
+def segGrid = newGrid()
+addTo(segGrid, "Model:", modelRow)
+rightTo(segGrid, modelDesc)
+rightTo(segGrid, nucleiCheck)
+addTo(segGrid, "Nucleus model:", nucleusRow)
+rightTo(segGrid, nucleusDesc)
+addTo(segGrid, "Nucleus diameter (px):", nucleusDiameterField)
+addTo(segGrid, "Output type:", outputBox)
+addTo(segGrid, "Run on:", regionBox)
+addTo(segGrid, "Cell expansion (um):", expansionField)
+
+def resGrid = newGrid()
+addTo(resGrid, "Pixel size (um/px):", pixelField)
+addTo(resGrid, "Tile size (px):", tileField)
+addTo(resGrid, "Cell diameter (px):", diameterField)
+
+def measGrid = newGrid()
+wideTo(measGrid, featuresCheck)
 def clumpRow = new GridPane()
 clumpRow.setHgap(6)
 clumpRow.add(clumpCheck, 0, 0)
 clumpRow.add(clumpField, 1, 0)
 clumpRow.add(new Label("um2"), 2, 0)
-pane.add(clumpRow, 0, row++, 2, 1)
-pane.add(new Separator(), 0, row++, 2, 1)
-addRow("Training regions (x,y; ...):", trainRegionsField)
-addRow("Validation regions (x,y; ...):", valRegionsField)
-addRow("Region size (px):", trainSizeField)
-addRow("Epochs:", epochsField)
-addRow("Learning rate:", lrField)
-addRow("Weight decay:", weightDecayField)
-pane.add(sgdCheck, 1, row++)
-pane.add(saveEachCheck, 1, row++)
-addRow("Checkpoint every N epochs:", saveEveryField)
-addRow("Ground truth:", targetBox)
-addRow("Training data folder:", corpusRow)
-pane.add(new Separator(), 0, row++, 2, 1)
-addRow("Clusters (explore):", clustersField)
-addRow("Classifier file:", classifierRow)
-pane.add(reuseCheck, 1, row++)
+wideTo(measGrid, clumpRow)
+
+def regionsGrid = newGrid()
+addTo(regionsGrid, "Training regions (x,y; ...):", trainRegionsField)
+addTo(regionsGrid, "Validation regions (x,y; ...):", valRegionsField)
+addTo(regionsGrid, "Region size (px):", trainSizeField)
+
+def trainGrid = newGrid()
+addTo(trainGrid, "Epochs:", epochsField)
+addTo(trainGrid, "Learning rate:", lrField)
+addTo(trainGrid, "Weight decay:", weightDecayField)
+rightTo(trainGrid, sgdCheck)
+rightTo(trainGrid, saveEachCheck)
+addTo(trainGrid, "Checkpoint every N epochs:", saveEveryField)
+
+def gtGrid = newGrid()
+addTo(gtGrid, "Ground truth:", targetBox)
+addTo(gtGrid, "Training data folder:", corpusRow)
+
+def clsGrid = newGrid()
+addTo(clsGrid, "Clusters (explore):", clustersField)
+addTo(clsGrid, "Classifier file:", classifierRow)
+rightTo(clsGrid, reuseCheck)
+
+def box = new VBox(6)
+box.setPadding(new Insets(10))
+box.getChildren().addAll(
+        taskGrid,
+        new Separator(),
+        section("Segmentation", segGrid),
+        section("Resolution and tiling", resGrid),
+        section("Measurements", measGrid),
+        section("Training regions", regionsGrid),
+        section("Fine-tuning", trainGrid),
+        section("Ground truth", gtGrid),
+        section("Classification", clsGrid))
+
+/** Open the sections this task uses, close the rest. Runs when the task changes only, so
+ *  anything you open by hand afterwards stays open. */
+def syncSections = {
+    groupPanes.each { title, tp -> tp.setExpanded(groupRelevant[title] as boolean) }
+}
+taskBox.valueProperty().addListener({ a, b, c -> syncSections() } as javafx.beans.value.ChangeListener)
+syncSections()
+
+def scroller = new ScrollPane(box)
+scroller.setFitToWidth(true)
+scroller.setPrefViewportWidth(620)
+// Tall enough to be useful, short enough to leave the OK button on screen on a laptop.
+scroller.setPrefViewportHeight(520)
+scroller.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER)
 
 def response = Dialogs.builder()
         .title("BAL cell segmentation")
-        .headerText("Cellpose-SAM segmentation of the BAL slide")
-        .content(pane)
+        .headerText("Segmentation, fine-tuning and classification for BAL slides")
+        .content(scroller)
         .buttons(ButtonType.OK, ButtonType.CANCEL)
         .resizable()
         .showAndWait()
