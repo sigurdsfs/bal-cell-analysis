@@ -53,7 +53,15 @@ try {
     if (cfgFile != null) CFG = evaluate(cfgFile) ?: [:]
 } catch (Exception ignored) { }
 
+// Where embed_cells.py and classify_cells.py live, and the working directory every command
+// runs in. This never moves -- it is the code, not the data.
 def BAL_DIR = new File(CFG.balClassifyDir ?: "C:/Users/Labsfs/Desktop/Mathilde/Mathilde Data/bal_classify")
+// Where the labelled corpus lives: crops/ plus labels.csv beside it. Normally the same
+// folder, but qupath_export_labels.groovy can be pointed elsewhere, and then this has to
+// follow it -- training on the default folder while the crops went somewhere else would
+// quietly train on the wrong set.
+def CROPS_HOME = binding.hasVariable('BAL_CLASSIFY_DIR') && BAL_CLASSIFY_DIR?.toString()?.trim()
+        ? new File(BAL_CLASSIFY_DIR.toString().trim()) : BAL_DIR
 def python = (CFG.pythonCellpose4 ?: [
         'C:/Users/Labsfs/AppData/Local/miniconda3/envs/cellpose_seg/python.exe',
         'C:/Users/lababr/AppData/Local/anaconda3/envs/cellpose_seg/python.exe',
@@ -110,7 +118,7 @@ def run = { List<String> cmd ->
 // show it -- every fold resamples the same slide. The crops folder is where labels from
 // every slide accumulate, so this is the mode that produces a transferable model.
 if (MODE == 'TRAIN_CORPUS') {
-    def cropsDir = new File(BAL_DIR, "crops")
+    def cropsDir = new File(CROPS_HOME, "crops")
     def classDirs = cropsDir.exists()
             ? cropsDir.listFiles({ f -> f.isDirectory() } as java.io.FileFilter) : null
     if (classDirs == null || classDirs.length == 0) {
@@ -134,7 +142,10 @@ if (MODE == 'TRAIN_CORPUS') {
     def corpus = new File(BAL_DIR, "corpus.parquet")
     if (REUSE && corpus.exists()) {
         println "Reusing ${corpus.getName()} -- untick 'reuse' after exporting more crops."
-    } else if (run([python, "embed_cells.py", "--crops", "crops", "--out", "corpus.parquet"]) != 0) {
+        // Absolute, because commands run with BAL_DIR as their working directory -- a bare
+        // "crops" would always mean the default folder, whatever the export was told.
+    } else if (run([python, "embed_cells.py", "--crops", cropsDir.getAbsolutePath(),
+                    "--out", "corpus.parquet"]) != 0) {
         Dialogs.showErrorMessage("Classify cells", "Embedding the corpus failed -- see the log.")
         return
     }

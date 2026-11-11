@@ -1,4 +1,21 @@
 /**
+ * RETIRED -- nothing in the dialog reaches this script any more. Use
+ * qupath_export_labels.groovy ("Export labelled cells"), which does both halves of the
+ * export with a tick box each.
+ *
+ * WHY IT WAS RETIRED: it drives the extension's own exporter, which builds its mask with
+ * useFilter(o -> o.getPathClass() == null), so every cell you classify "Macrophage" is
+ * dropped from the mask while its pixels stay in the image -- taught to Cellpose as
+ * background. That made labelling a cell for the classifier and using it for segmentation
+ * mutually exclusive, which is the whole problem qupath_export_labels.groovy solves.
+ *
+ * It is kept on disk, and still runs standalone, for the ONE thing it does that the
+ * replacement does not: it walks every image in the project in a single run, whereas the
+ * replacement does the open image (use qupath_batch_slides.groovy for a whole project).
+ * Only safe when no cell carries a cell-type class.
+ *
+ * ---
+ *
  * Exports this project's corrected ground truth into a shared corpus folder, so training
  * data accumulates across slides and projects instead of living inside one project.
  *

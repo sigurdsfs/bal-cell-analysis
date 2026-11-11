@@ -39,12 +39,12 @@ Everything is reachable from **one entry point**: `qupath_bal_gui.groovy`.
 | **Pair soma + nuclei into cells** | Turns outlines already in the image into cell objects: anything not a region rectangle is a soma, a `Nucleus` annotation inside it becomes its nucleus |
 | **Convert selected objects** | Annotation ⇄ detection in place. Annotations are the only editable type, detections the only classifiable one, and class, measurements and object ID all survive the trip |
 | **Prepare training regions** | Creates Training/Validation rectangles with editable outlines to correct |
-| **Export corrections to training corpus** | Adds this project's corrected regions to a shared ground-truth folder |
 | **Train model on corrected regions** | Fine-tunes Cellpose on that ground truth |
 | **Classify cells: explore** | Clusters cells by transformer embedding; writes a montage to name the clusters |
 | **Classify cells: train classifier** | Trains a cell-type classifier from the classes you set in this image |
 | **Classify cells: train on labelled corpus** | Trains on every labelled crop from every slide — the model to use on a slide it has not seen |
 | **Classify cells: predict** | Applies a saved classifier and writes the classes back onto the cells. Classes you set by hand are kept unless you ask for them to be re-predicted |
+| **Export labelled cells** | The one export: one labelled set → Cellpose masks **and/or** per-class crops for the classifier, a tick box and a folder for each |
 
 The two training tasks write to **Save classifier as**, and predict reads from **Classifier to
 predict with** — two separate boxes, so naming a new model does not redirect the next
@@ -52,7 +52,6 @@ prediction at a file that has not been written. Either may be a bare name: `corp
 becomes `bal_classify/corpus_v2.joblib`. Leave a box empty for `bal_classify/classifier.joblib`.
 Training always refits from scratch over everything in the corpus, so it **replaces** the
 file it writes; keep separate names if you want to compare two models.
-| **Export labelled cells** | One labelled set → Cellpose masks **and** per-class crops for the classifier |
 
 Two scripts run outside the dialog:
 - **`qupath_batch_slides.groovy`** — runs the pipeline over every image in the project,

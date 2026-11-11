@@ -209,7 +209,6 @@ taskBox.getItems().addAll(
         "Pair soma + nuclei into cells",
         "Convert selected objects (annotation <-> detection)",
         "Prepare training regions",
-        "Export corrections to training corpus",
         "Train model on corrected regions",
         "Classify cells: explore (no labels yet)",
         "Classify cells: train classifier",
@@ -334,6 +333,34 @@ corpusRow.setHgap(6)
 corpusRow.add(corpusField, 0, 0)
 corpusRow.add(corpusBrowse, 1, 0)
 GridPane.setHgrow(corpusField, Priority.ALWAYS)
+
+// One export, two outputs, each with its own switch and its own folder. They were two
+// separate tasks until now, and the older one drove the extension's exporter, which drops
+// every classified cell from the mask -- so labelling a cell for the classifier and using it
+// for segmentation were mutually exclusive. Both are on by default because the whole point
+// is that one set of hand-labelled cells serves both jobs.
+def exportSegCheck = new CheckBox("Segmentation masks (Cellpose ground truth)")
+exportSegCheck.setSelected(prefs.getBoolean("exportSeg", true))
+def exportCropsCheck = new CheckBox("Classifier crops (cell-type labels)")
+exportCropsCheck.setSelected(prefs.getBoolean("exportCrops", true))
+
+// Where crops/ and labels.csv go. embed_cells.py reads labels.csv from BESIDE the crops
+// folder, so this names the folder that holds both, not the crops folder itself.
+def cropsDirField = new TextField(prefs.get("cropsDir", ""))
+cropsDirField.setPromptText("empty = ${CLASSIFY_DIR}")
+def cropsDirBrowse = new javafx.scene.control.Button("Browse...")
+cropsDirBrowse.setOnAction({
+    def start = cropsDirField.getText()?.trim()
+    def dir = qupath.fx.dialogs.FileChoosers.promptForDirectory(
+            "Folder to hold crops/ and labels.csv",
+            start ? new File(start) : (CLASSIFY_DIR.exists() ? CLASSIFY_DIR : null))
+    if (dir != null) cropsDirField.setText(dir.getAbsolutePath())
+} as javafx.event.EventHandler)
+def cropsDirRow = new GridPane()
+cropsDirRow.setHgap(6)
+cropsDirRow.add(cropsDirField, 0, 0)
+cropsDirRow.add(cropsDirBrowse, 1, 0)
+GridPane.setHgrow(cropsDirField, Priority.ALWAYS)
 def tileField = new TextField(prefs.get("tileSize", "1024"))
 // How far outside each region Cellpose may look, so a cell crossing the region edge is
 // segmented whole rather than clipped to the edge and then measured as a whole cell.
@@ -355,7 +382,6 @@ def syncEnabled = {
     def task = taskBox.getValue()
     boolean segmenting = task == "Segment cells"
     boolean preparing = task == "Prepare training regions"
-    boolean exporting = task == "Export corrections to training corpus"
     boolean training = task == "Train model on corrected regions"
     boolean classifying = task.startsWith("Classify cells")
     boolean clsExplore = task.endsWith("explore (no labels yet)")
@@ -375,9 +401,6 @@ def syncEnabled = {
         preparing  ? "Drop Training/Validation rectangles and segment inside them as editable\n" +
                      "annotations. You then correct every outline by hand -- densely: a cell you\n" +
                      "leave out teaches the model that it is background." :
-        exporting  ? "Add this project's corrected rectangles to a shared corpus folder, so\n" +
-                     "ground truth accumulates across slides. Adds to what is there; never\n" +
-                     "deletes. Run it once per project, then train on the whole corpus." :
                      "Fine-tune the chosen model. With a corpus folder set, it trains on the\n" +
                      "pooled data from every slide; empty, it uses this project's rectangles.\n" +
                      "Correct the outlines FIRST -- training on uncorrected output just\n" +
@@ -438,8 +461,19 @@ def syncEnabled = {
     [trainRegionsField, valRegionsField, trainSizeField].each { it.setDisable(!preparing) }
     [epochsField, lrField, weightDecayField, sgdCheck].each { it.setDisable(!training) }
     targetBox.setDisable(!(training || exportLabels))
-    corpusField.setDisable(!(exporting || training || exportLabels))
-    corpusBrowse.setDisable(!(exporting || training || exportLabels))
+    // The two switches belong to the export only. Each folder follows its own switch, so a
+    // path you cannot write to is never editable: training reads the masks folder, which is
+    // why that one stays live for training too.
+    exportSegCheck.setDisable(!exportLabels)
+    exportCropsCheck.setDisable(!exportLabels)
+    boolean wantSeg = exportSegCheck.isSelected(), wantCrops = exportCropsCheck.isSelected()
+    corpusField.setDisable(!(training || (exportLabels && wantSeg)))
+    corpusBrowse.setDisable(!(training || (exportLabels && wantSeg)))
+    // Also live for corpus training, which READS the folder the export wrote crops into.
+    // One field for both directions, so they cannot drift apart.
+    boolean cropsFolderUsed = (exportLabels && wantCrops) || clsCorpus
+    cropsDirField.setDisable(!cropsFolderUsed)
+    cropsDirBrowse.setDisable(!cropsFolderUsed)
     // conversion-only
     boolean toAnnotations = convertToBox.getValue().startsWith("Annotations")
     convertToBox.setDisable(!converting)
@@ -515,7 +549,9 @@ def syncEnabled = {
     groupRelevant["Convert objects"] = converting
     groupRelevant["Training regions"] = preparing
     groupRelevant["Fine-tuning"] = training
-    groupRelevant["Ground truth"] = training || exporting || exportLabels
+    // Corpus training reads the crops folder, which lives in this section -- a section
+    // nobody claims stays shut, and the field would look missing.
+    groupRelevant["Ground truth"] = training || exportLabels || clsCorpus
     groupRelevant["Classification"] = classifying
 
     modelBox.setDisable(classifying || exportLabels || converting)
@@ -593,6 +629,10 @@ outputBox.valueProperty().addListener({ a, b, c -> syncEnabled() } as javafx.bea
 convertToBox.valueProperty().addListener({ a, b, c -> syncEnabled() } as javafx.beans.value.ChangeListener)
 featuresCheck.selectedProperty().addListener({ a, b, c -> syncEnabled() } as javafx.beans.value.ChangeListener)
 clumpCheck.selectedProperty().addListener({ a, b, c -> syncEnabled() } as javafx.beans.value.ChangeListener)
+// Each export switch owns a folder field, so toggling it has to re-run the enable pass or
+// the folder stays greyed out after you tick its box.
+exportSegCheck.selectedProperty().addListener({ a, b, c -> syncEnabled() } as javafx.beans.value.ChangeListener)
+exportCropsCheck.selectedProperty().addListener({ a, b, c -> syncEnabled() } as javafx.beans.value.ChangeListener)
 syncEnabled()
 
 // --- layout -------------------------------------------------------------------
@@ -682,7 +722,10 @@ addTo(trainGrid, "Checkpoint every N epochs:", saveEveryField)
 
 def gtGrid = newGrid()
 addTo(gtGrid, "Ground truth:", targetBox)
-addTo(gtGrid, "Training data folder:", corpusRow)
+wideTo(gtGrid, exportSegCheck)
+addTo(gtGrid, "Masks folder:", corpusRow)
+wideTo(gtGrid, exportCropsCheck)
+addTo(gtGrid, "Classifier data folder:", cropsDirRow)
 
 def clsGrid = newGrid()
 addTo(clsGrid, "Clusters (explore):", clustersField)
@@ -866,6 +909,9 @@ prefs.put("classifierIn", classifierInField.getText())
 prefs.putBoolean("reuseEmb", reuseCheck.isSelected())
 prefs.put("corpus", corpusField.getText())
 prefs.put("target", targetBox.getValue())
+prefs.putBoolean("exportSeg", exportSegCheck.isSelected())
+prefs.putBoolean("exportCrops", exportCropsCheck.isSelected())
+prefs.put("cropsDir", cropsDirField.getText())
 prefs.putBoolean("nuclei", nucleiCheck.isSelected())
 prefs.put("nucleusModel", nucleusBox.getValue())
 prefs.put("nucleusDiameter", nucleusDiameterField.getText())
@@ -910,10 +956,38 @@ if (task.startsWith("Convert selected objects")) {
 
 // --- export hand-labelled cells for both pipelines ---------------------------
 if (task.startsWith("Export labelled cells")) {
-    BAL_GT_DIR = corpusField.getText()?.trim() ?: ""
     BAL_EXPORT_TARGET = targetBox.getValue().startsWith("Nuclei") ? 'NUCLEI' : 'SOMA'
-    // Cell-type crops come from soma outlines; nuclei carry no cell-type class.
-    BAL_EXPORT_WHAT = BAL_EXPORT_TARGET == 'NUCLEI' ? 'SEGMENTATION' : 'BOTH'
+    BAL_EXPORT_SEG = exportSegCheck.isSelected()
+    // Cell-type crops come from soma outlines; a nucleus carries no cell-type class, so the
+    // worker reports that rather than writing nothing and calling it success.
+    BAL_EXPORT_CROPS = exportCropsCheck.isSelected()
+    if (!BAL_EXPORT_SEG && !BAL_EXPORT_CROPS) {
+        Dialogs.showErrorMessage("Export labelled cells",
+                "Nothing to export.\n\n" +
+                "Tick 'Segmentation masks', 'Classifier crops', or both.")
+        return
+    }
+    // Each half falls back to its own default folder rather than refusing, and says which.
+    BAL_GT_DIR = corpusField.getText()?.trim() ?: ""
+    BAL_CLASSIFY_DIR = cropsDirField.getText()?.trim() ?: ""
+    if (BAL_EXPORT_SEG) {
+        if (!BAL_GT_DIR) {
+            BAL_GT_DIR = defaultCorpus
+            println "No masks folder given -- using the default corpus: ${BAL_GT_DIR}"
+        }
+        println "Masks      -> ${BAL_GT_DIR}"
+    }
+    if (BAL_EXPORT_CROPS) {
+        def cropsHome = new File(BAL_CLASSIFY_DIR ?: CLASSIFY_DIR.getAbsolutePath())
+        println "Crops      -> ${new File(cropsHome, 'crops')}  (labels.csv beside it)"
+        // The classifier reads the corpus from its own folder, so sending crops elsewhere
+        // and then training on the default would train on the wrong set, silently.
+        if (BAL_CLASSIFY_DIR && new File(BAL_CLASSIFY_DIR) != CLASSIFY_DIR) {
+            println "  NOTE: this is not the default ${CLASSIFY_DIR}. Put the SAME folder in"
+            println "  'Classifier data folder' when you run 'train on labelled corpus', or it"
+            println "  will train on whatever is in the default folder instead."
+        }
+    }
     println "=== ${task} ==="
     evaluate(PRE + new File(scriptDir, "qupath_export_labels.groovy").text)
     def mins = (System.currentTimeMillis() - t0) / 60000.0
@@ -930,6 +1004,9 @@ if (task.startsWith("Classify cells")) {
     BAL_PREDICT_OVERWRITE = overwriteCheck.isSelected()
     BAL_CLUSTERS = Math.max(2, (clustersField.getText()?.trim() ?: "5") as int)
     BAL_REUSE_EMBEDDINGS = reuseCheck.isSelected()
+    // The same folder the export writes crops into: 'train on labelled corpus' reads them
+    // back from here, so one field has to serve both or the two drift apart.
+    BAL_CLASSIFY_DIR = cropsDirField.getText()?.trim() ?: ""
 
     // The worker takes ONE --model path and already knows whether it is writing or reading.
     // Which box that path comes from depends on the task, and this is the only place that
@@ -1010,15 +1087,6 @@ if (task != "Segment cells") {
         BAL_VAL_REGIONS = valRegions
         BAL_TRAIN_SIZE = trainSize as int
         evaluate(PRE + new File(scriptDir, "qupath_prepare_training.groovy").text)
-    } else if (task == "Export corrections to training corpus") {
-        // Exporting needs somewhere to put the patches; fall back to the default folder
-        // rather than refusing, and say which one is being used.
-        if (!BAL_GT_DIR) {
-            BAL_GT_DIR = defaultCorpus
-            println "No folder given -- using the default corpus: ${BAL_GT_DIR}"
-        }
-        println "=== Exporting corrections to ${BAL_GT_DIR} ==="
-        evaluate(PRE + new File(scriptDir, "qupath_export_training_data.groovy").text)
     } else {
         println "=== Training ${modelBox.getValue()} for ${epochs as int} epochs" +
                 (BAL_GT_DIR ? " on the corpus at ${BAL_GT_DIR}" : " on this project's rectangles") + " ==="

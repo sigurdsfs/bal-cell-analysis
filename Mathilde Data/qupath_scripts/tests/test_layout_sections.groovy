@@ -60,16 +60,15 @@ def EXPECTED = [
         ["Training regions"],
     "Train model on corrected regions":
         ["Fine-tuning", "Ground truth"],
-    "Export corrections to training corpus":
-        ["Ground truth"],
     "Export labelled cells (segmentation + classifier)":
         ["Ground truth"],
     "Classify cells: explore (no labels yet)":
         ["Classification"],
     "Classify cells: train classifier":
         ["Classification"],
+    // The corpus task reads the crops folder, which lives in the Ground truth section.
     "Classify cells: train on labelled corpus (all slides)":
-        ["Classification"],
+        ["Classification", "Ground truth"],
     "Classify cells: predict":
         ["Classification"],
 ]

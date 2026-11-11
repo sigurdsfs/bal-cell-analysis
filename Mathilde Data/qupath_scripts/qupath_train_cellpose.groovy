@@ -64,7 +64,7 @@ def OUT_NAME  = binding.hasVariable('BAL_MODEL_NAME')? BAL_MODEL_NAME.toString()
 // so for cyto2/cyto3 the last epoch is all you can get.
 boolean SAVE_EACH = binding.hasVariable('BAL_SAVE_EACH') ? BAL_SAVE_EACH as boolean : false
 int SAVE_EVERY = binding.hasVariable('BAL_SAVE_EVERY') ? BAL_SAVE_EVERY as int : 5
-// Point this at a shared corpus (see qupath_export_training_data.groovy) to train on ground
+// Point this at a shared corpus (filled by qupath_export_labels.groovy) to train on ground
 // truth gathered from several slides. Left empty, training exports and uses this project only.
 def GT_DIR    = binding.hasVariable('BAL_GT_DIR') && BAL_GT_DIR?.toString()?.trim() ?
         new File(BAL_GT_DIR.toString().trim()) : null
@@ -256,7 +256,7 @@ def summariseTraining = { File modelFile ->
 // --- corpus mode: train on ground truth gathered from several slides ---------
 // The extension only exports patches when cleanTrainingDir is set, and cleaning ERASES the
 // folder first -- which would destroy a corpus. So in corpus mode we never clean, and the
-// patches must already be there, put by qupath_export_training_data.groovy.
+// patches must already be there, put by qupath_export_labels.groovy.
 if (GT_DIR != null) {
     def countPairs = { File dir ->
         dir.exists() ? (dir.listFiles()?.count { it.name.toLowerCase().endsWith("_masks.tif") } ?: 0) : 0
@@ -286,8 +286,8 @@ if (GT_DIR != null) {
     if (nTrain == 0) {
         Dialogs.showErrorMessage("Cellpose training",
                 "No training patches in:\n${GT_DIR}\n\n" +
-                "Run qupath_export_training_data.groovy on each project whose corrections you " +
-                "want to include, then train again.")
+                "Run 'Export labelled cells' on each slide whose corrections you want to " +
+                "include, then train again.")
         return
     }
 

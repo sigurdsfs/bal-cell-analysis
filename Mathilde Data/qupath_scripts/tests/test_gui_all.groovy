@@ -8,7 +8,7 @@ def stubbed = F.text.replace(".showAndWait()", ".with { Optional.empty() }")
 def prefs = Preferences.userRoot().node("bal_segmentation")
 def tasks = ["Segment cells", "Pair soma + nuclei into cells",
              "Convert selected objects (annotation <-> detection)", "Prepare training regions",
-             "Export corrections to training corpus", "Train model on corrected regions",
+             "Train model on corrected regions",
              "Classify cells: explore (no labels yet)", "Classify cells: train classifier",
              "Classify cells: train on labelled corpus (all slides)",
              "Classify cells: predict", "Export labelled cells (segmentation + classifier)"]

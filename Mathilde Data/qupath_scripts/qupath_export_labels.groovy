@@ -14,15 +14,28 @@
  * are excluded. So you can label each cell by type, class the rectangle Validation, and
  * still get complete segmentation ground truth -- plus the class labels for the classifier.
  *
- * WHAT IT WRITES (BAL_EXPORT_WHAT = 'BOTH' | 'SEGMENTATION' | 'CLASSIFIER'):
- *   SEGMENTATION -> <corpus>/train|test/<project>__<image>_region_N.tif + _masks.tif
- *                   Instance masks: every cell gets its own label, classified or not.
- *   CLASSIFIER   -> <balClassify>/crops/<ClassName>/<project>__<image>_<id>.png
- *                   One crop per labelled cell, filed by class, plus labels.csv.
- *                   Crops come from QuPath, so this works for ANY slide -- no zarr needed.
+ * THE ONLY EXPORT. It replaced qupath_export_training_data.groovy, which drove the
+ * extension's own exporter and therefore dropped every classified cell from the mask. Each
+ * of the two outputs is switched on independently and has its own folder:
+ *
+ *   BAL_EXPORT_SEG    -> <BAL_GT_DIR>/train|test/<project>__<image>_region_N.tif + _masks.tif
+ *                        Instance masks: every cell gets its own label, classified or not.
+ *                        'test' for a Validation rectangle, 'train' for a Training one.
+ *   BAL_EXPORT_CROPS  -> <BAL_CLASSIFY_DIR>/crops/<ClassName>/<project>__<image>_<id>.png
+ *                        One crop per labelled cell, filed by class, plus labels.csv beside
+ *                        the crops folder -- which is where embed_cells.py looks for it.
+ *                        Crops come from QuPath, so this works for ANY slide -- no zarr.
+ *
+ * Both default to on, which is the point: one set of hand-labelled cells serves both jobs.
+ * Switch one off when you only want that half -- re-exporting crops after changing
+ * `cropStyle`, say, without rewriting masks that have not changed.
  *
  * Run it with the image open. It covers every Training/Validation rectangle in the image;
  * run it once per slide (or let qupath_batch_slides.groovy do that for you).
+ *
+ * NOT COVERED, and the one thing the old exporter did that this does not: it walked EVERY
+ * image in the project in a single run. This one does the open image. Use
+ * qupath_batch_slides.groovy for a whole project.
  */
 
 import qupath.lib.images.servers.LabeledImageServer
@@ -41,10 +54,32 @@ try {
     if (cfgFile != null) CFG = evaluate(cfgFile) ?: [:]
 } catch (Exception ignored) { }
 
-def WHAT = binding.hasVariable('BAL_EXPORT_WHAT') ? BAL_EXPORT_WHAT.toString().toUpperCase() : 'BOTH'
+// The two halves are independent switches. BAL_EXPORT_WHAT is the older single-valued form
+// and is still honoured, so anything that set it keeps working.
+boolean SEG, CROPS
+if (binding.hasVariable('BAL_EXPORT_WHAT')) {
+    def w = BAL_EXPORT_WHAT.toString().toUpperCase()
+    SEG = w in ['BOTH', 'SEGMENTATION']
+    CROPS = w in ['BOTH', 'CLASSIFIER']
+} else {
+    SEG = binding.hasVariable('BAL_EXPORT_SEG') ? BAL_EXPORT_SEG as boolean : true
+    CROPS = binding.hasVariable('BAL_EXPORT_CROPS') ? BAL_EXPORT_CROPS as boolean : true
+}
+if (!SEG && !CROPS) {
+    Dialogs.showErrorMessage("Export labelled cells",
+            "Nothing to export.\n\n" +
+            "Tick 'Segmentation masks', 'Classifier crops', or both.")
+    return
+}
+
 def CORPUS = new File(binding.hasVariable('BAL_GT_DIR') && BAL_GT_DIR?.toString()?.trim() ? BAL_GT_DIR.toString().trim()
         : (CFG.groundTruthDir ?: "C:/Users/Labsfs/Desktop/Mathilde/Mathilde Data/cellpose_ground_truth"))
-def CLASSIFY_DIR = new File(CFG.balClassifyDir ?: "C:/Users/Labsfs/Desktop/Mathilde/Mathilde Data/bal_classify")
+// Holds crops/ and labels.csv. Overridable so the two outputs can go to different places --
+// and so the test harness can write somewhere other than the real corpus, which it used to
+// add crops to every time it ran.
+def CLASSIFY_DIR = new File(binding.hasVariable('BAL_CLASSIFY_DIR') && BAL_CLASSIFY_DIR?.toString()?.trim()
+        ? BAL_CLASSIFY_DIR.toString().trim()
+        : (CFG.balClassifyDir ?: "C:/Users/Labsfs/Desktop/Mathilde/Mathilde Data/bal_classify"))
 double PIXEL_SIZE_UM = binding.hasVariable('BAL_PIXEL_SIZE_UM') ? BAL_PIXEL_SIZE_UM as double : (CFG.pixelSizeUm ?: 0.137)
 // Crop size around each labelled cell, in pixels at full resolution. 128 px = 17.5 um here,
 // enough context for the transformer to see the cell and its neighbours.
@@ -89,6 +124,29 @@ def NUCLEUS_CLASS = "Nucleus"
 def REGION_CLASSES = ["Training", "Validation"]
 def CORPUS_ROOT = TARGET == 'NUCLEI' ? new File(CORPUS, "nuclei") : CORPUS
 
+// A nucleus carries no cell type, so there are no classifier crops to cut from one. Say so
+// rather than reporting "0 crops", which reads like a failure.
+if (CROPS && TARGET == 'NUCLEI') {
+    println "Target is Nuclei, so no classifier crops will be written: a nucleus annotation"
+    println "  carries no cell-type class. Switch the target to Soma for crops."
+    if (!SEG) {
+        Dialogs.showErrorMessage("Export labelled cells",
+                "Nothing to export.\n\n" +
+                "Only 'Classifier crops' is ticked, but the target is Nuclei and nuclei\n" +
+                "carry no cell type. Tick 'Segmentation masks', or set the target to Soma.")
+        return
+    }
+}
+
+// Counts image/mask pairs, so the numbers mean patches rather than files. Carried over from
+// qupath_export_training_data.groovy, which this script replaced: knowing the corpus grew
+// (and by how much) is the only way to tell a working export from a silent no-op.
+def countPairs = { File root ->
+    def one = { File d -> d.exists() ? (d.listFiles()?.count { it.name.toLowerCase().endsWith("_masks.tif") } ?: 0) : 0 }
+    [train: one(new File(root, "train")), test: one(new File(root, "test"))]
+}
+def before = SEG ? countPairs(CORPUS_ROOT) : null
+
 /** Is this annotation part of the target we are exporting? */
 def isTargetObject = { PathObject o ->
     def c = o.getPathClass()?.toString()
@@ -118,7 +176,7 @@ def labelRows = []
 // The crop maker, built once. Its neighbour list must be EVERY segmented cell, not just
 // the labelled ones: a macrophage beside an unlabelled lymphocyte has the same problem.
 def cropper = null
-if (WHAT in ['BOTH', 'CLASSIFIER'] && TARGET != 'NUCLEI') {
+if (CROPS && TARGET != 'NUCLEI') {
     def cropsLib = evaluate(new File(scriptDir, "bal_crops.groovy"))
     def cropCandidates = getAnnotationObjects().findAll { isTargetObject(it) } + getDetectionObjects()
     cropper = cropsLib.newCropper(server, cropCandidates, CROP, CROP_STYLE)
@@ -135,7 +193,7 @@ regions.eachWithIndex { region, idx ->
     }
 
     // --- segmentation ground truth -------------------------------------------
-    if (WHAT in ['BOTH', 'SEGMENTATION']) {
+    if (SEG) {
         def dir = new File(CORPUS_ROOT, isValidation ? "test" : "train")
         dir.mkdirs()
         def base = "${tag}_region_${idx}"
@@ -151,7 +209,7 @@ regions.eachWithIndex { region, idx ->
     }
 
     // --- classifier crops ------------------------------------------------------
-    if (WHAT in ['BOTH', 'CLASSIFIER'] && TARGET != 'NUCLEI') {
+    if (CROPS && TARGET != 'NUCLEI') {
         cells.findAll { it.getPathClass() != null && !(it.getPathClass().toString() in NON_CELL_CLASSES) }
              .each { cell ->
             def cls = cell.getPathClass().toString()
@@ -177,7 +235,7 @@ regions.eachWithIndex { region, idx ->
 }
 
 // --- classifier label index ------------------------------------------------------
-if (WHAT in ['BOTH', 'CLASSIFIER'] && cropsWritten > 0) {
+if (CROPS && cropsWritten > 0) {
     def csv = new File(CLASSIFY_DIR, "labels.csv")
     def COLS = ["crop", "class", "image", "crop_style", "x", "y"]
     // Append, so labels gathered from many slides accumulate. Same crop name overwrites.
@@ -207,9 +265,28 @@ if (WHAT in ['BOTH', 'CLASSIFIER'] && cropsWritten > 0) {
 
 println ""
 println "=== export complete ==="
-if (WHAT in ['BOTH', 'SEGMENTATION'])
+if (SEG) {
     println "  segmentation: ${segWritten} ${TARGET.toLowerCase()} region(s) written to ${CORPUS_ROOT}"
-if (WHAT in ['BOTH', 'CLASSIFIER']) {
+    def after = countPairs(CORPUS_ROOT)
+    println "    corpus now holds ${after.train} train and ${after.test} test pair(s) " +
+            "(was ${before.train} and ${before.test})"
+    if (after.train == before.train && after.test == before.test) {
+        println "    NOTHING WAS ADDED -- the rectangles may hold no outlines, or this slide's"
+        println "    patches were already there and were overwritten with the same content."
+    }
+    // Per-slide coverage: with many slides it matters which ones are actually represented,
+    // and a corpus is easy to train on while believing it covers more slides than it does.
+    ["train", "test"].each { sub ->
+        def bySlide = (new File(CORPUS_ROOT, sub).listFiles() ?: [])
+                .findAll { it.name.endsWith("_masks.tif") }
+                .groupBy { it.name.replaceAll(/_region_\d+_masks\.tif$/, "") }
+        if (!bySlide.isEmpty()) {
+            println "    ${sub} patches by slide:"
+            bySlide.sort { it.key }.each { slide, files -> println "      ${files.size()}  ${slide}" }
+        }
+    }
+}
+if (CROPS) {
     println "  classifier:   ${cropsWritten} crop(s) written to ${new File(CLASSIFY_DIR, 'crops')}"
     println "                crop style ${CROP_STYLE}" + (CROP_STYLE == 'NEIGHBOURS_OUT'
             ? ", ${paintedTotal} neighbouring cell(s) painted out" : "")

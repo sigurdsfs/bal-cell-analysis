@@ -45,7 +45,7 @@ The harnesses live in `Mathilde Data/qupath_scripts/tests/`. Run with:
 | `test_layout_sections.groovy` | each task opens exactly the collapsible sections it uses |
 | `test_convert_objects.groovy` | annotation ⇄ detection: class, name, measurements, **ID**, nesting, nucleus split (builds its own image — needs no project) |
 | `test_crop_styles.groovy` | the classifier's crops: the neighbour goes, the cell stays, the fill looks like slide, both exporters use the same maker (needs no project) |
-| `test_export_labels.groovy` | classified cells stay in the masks; soma and nucleus corpora stay separate (needs a project) |
+| `test_export_labels.groovy` | the single export: classified cells stay in the masks, each half runs alone, soma and nucleus corpora stay separate, and **only temp folders are written** (needs a project) |
 | `test_prune2.groovy` | checkpoint pruning, including the log being wiped mid-run |
 | `test_summary2.groovy` | training-loss verdicts against synthetic curves |
 | `test_corpus_multislide.groovy` | corpus prefixing, per-slide counts, train/test overlap |
@@ -86,11 +86,10 @@ qupath_bal_gui.groovy
 ├── qupath_cells_with_nuclei.groovy     soma + nuclei (both Cellpose) -> cell objects
 ├── qupath_cell_features.groovy         all per-cell measurements
 ├── qupath_prepare_training.groovy      Training/Validation rectangles
-├── qupath_export_training_data.groovy  adds corrections to the shared corpus
+├── qupath_export_labels.groovy     masks AND classifier crops, a tick box each
 ├── qupath_train_cellpose.groovy        fine-tuning (+ checkpoint pruning)
 ├── qupath_convert_objects.groovy       annotation <-> detection, in place
 ├── qupath_classify_cells.groovy        drives the Python classifier
-├── qupath_export_labels.groovy         labelled cells -> masks AND per-class crops
 └── qupath_batch_slides.groovy          the whole pipeline over every image in a project
         └── bal_classify/embed_cells.py + classify_cells.py
 
@@ -196,8 +195,10 @@ files parsed fine on their own. `test_pre_combination.groovy` compiles every pai
   "Macrophage" is dropped from the mask while its pixels stay in the image — taught as
   background. **`qupath_export_labels.groovy` avoids this** by writing the masks itself with
   the opposite filter (exclude only the Training/Validation rectangles), so one labelled set
-  serves both segmentation and classification. Use it rather than
-  `qupath_export_training_data.groovy` whenever cells carry cell-type classes.
+  serves both segmentation and classification. It is now the **only** export, with a tick box
+  and a folder per half. `qupath_export_training_data.groovy` is retired for this reason and
+  no longer reachable from the dialog; it is kept only because it walks every image in a
+  project in one run, and it is safe only when no cell carries a cell-type class.
 - **`moveRenameAndReturnModelFile` returns the FIRST file in `<train>/models`, not the newest.**
   Clear that folder before training or you get a model from days ago.
 - **`saveTrainingImages()` only runs when `cleanTrainingDir` is set, and cleaning erases the
