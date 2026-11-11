@@ -377,9 +377,11 @@ Q="/c/Users/<you>/AppData/Local/QuPath-0.7.0/QuPath-0.7.0 (console).exe"
 "$Q" script "Mathilde Data/qupath_scripts/tests/test_crop_styles.groovy"
 ```
 
-Expected, as of this commit: `compile_only` 21 scripts OK, `test_api_calls` "All exist.",
-`test_config_block` 10 correct / 0 broken, `test_gui_all` 40 combinations OK,
-`test_region_boundary` 38 checks, `test_convert_objects` 38, `test_crop_styles` 25.
+Expected, as of this commit: `test_api_calls` "All exist.", `test_config_block` 10 correct /
+0 broken, `test_gui_all` 40 combinations OK, `test_region_boundary` 38 checks,
+`test_convert_objects` 38, `test_crop_styles` 25. `compile_only` reports one `OK` per script
+and no `BROKEN` — the total is not a fixed number, because it also compiles
+`bal_config.local.groovy` when you have one.
 `CLAUDE.md` lists the full set and what each one covers.
 
 A harness failing here is an install problem, not a code problem — most often the hard-coded
