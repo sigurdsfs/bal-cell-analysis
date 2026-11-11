@@ -38,7 +38,7 @@ before being rewritten.
 | Switch | |
 |---|---|
 | `-DryRun` | report only, change nothing |
-| `-WithCpsam` | also fetch the 1.23 GB Cellpose-SAM weights |
+| `-SkipCpsam` | skip the 1.23 GB Cellpose-SAM weights (fetched by default) |
 | `-Force` | recreate environments, re-download, replace junctions |
 | `-SkipEnvs` `-SkipExtension` `-SkipWeights` `-SkipConfig` `-SkipVerify` | do part of it |
 | `-CpuOnly` / `-Cuda` | force the CPU or CUDA build of PyTorch instead of auto-detecting |
@@ -87,7 +87,7 @@ the network, so treat a failed pin as a pin to relax, not a wall.
 | GPU | NVIDIA RTX A2000 12 GB | Required in practice. Whole-slide segmentation is ~2 h on this GPU; CPU is not viable. |
 | NVIDIA driver | — | **A driver is all you need.** PyTorch ships its own CUDA 12.6 runtime, so do *not* install a CUDA toolkit. |
 | Conda | conda 26.7.2 (Miniconda) | Miniconda or Miniforge; Anaconda works too. |
-| Disk | — | Measured here: **5.5 GB** `cellpose_seg` + **4.9 GB** `cellpose3` + **3.6 GB** of model weights (2.4 GB Cellpose, 1.2 GB Phikon-v2) = **~14 GB**. The training corpus is another ~8 GB, but that is data, not install. |
+| Disk | — | Measured here: **5.5 GB** `cellpose_seg` + **4.9 GB** `cellpose3` + **~2.5 GB** of model weights (cpsam 1.23 GB, Phikon-v2 1.2 GB, cyto3 and nuclei 25 MB each) = **~13 GB**. The training corpus is another ~8 GB, but that is data, not install. |
 
 You also need the slide itself. No image data is in the repository — `.vsi`, `.ets` and
 `.zarr` are git-ignored because they are tens of GB.
@@ -234,20 +234,23 @@ Then the same for `cellpose3`.
 
 ---
 
-## 4. Model weights (~4 GB, downloaded on first use)
+## 4. Model weights (~2.5 GB)
 
-Nothing to do here in advance — but know where it goes, and that **the first run of each
-needs internet**.
+`install.ps1` fetches these for you, so your first segmentation is not a surprise multi-GB
+wait. Doing it by hand means nothing to do in advance — each downloads on first use — but
+**that first use needs internet**.
 
-**Cellpose** downloads to `C:\Users\<you>\.cellpose\models\`. Measured on this machine:
+**Cellpose** downloads to `C:\Users\<you>\.cellpose\models\`. Sizes measured on this machine:
 
-| File | Size | What |
-|---|---|---|
-| `cpsam` | 1.23 GB | Cellpose-SAM, the cellpose-4 model (a 304M-parameter transformer) |
-| `cyto3` | 25 MB | the default soma model (a 6.6M UNet) |
-| `cyto2torch_0` | 25 MB | cyto2 |
-| `nucleitorch_0` | 25 MB | the nucleus model |
-| | **2.4 GB total** | |
+| File | Size | What | Installer fetches it |
+|---|---|---|---|
+| `cpsam` | 1.23 GB | Cellpose-SAM, the cellpose-4 model (a 304M-parameter transformer) | yes, unless `-SkipCpsam` |
+| `cyto3` | 25 MB | the default soma model (a 6.6M UNet) | yes |
+| `nucleitorch_0` | 25 MB | the `nuclei` model, for the nucleus pass | yes |
+| `cyto2torch_0` | 25 MB | cyto2, only if you select it | no — on first use |
+
+That folder holds 2.4 GB on this machine rather than the 1.3 GB those four add up to,
+because an earlier Cellpose run also pulled `cpsam_v2`. Nothing here uses it.
 
 **Phikon-v2** downloads from Hugging Face to
 `C:\Users\<you>\.cache\huggingface\hub\models--owkin--phikon-v2\` — **1.2 GB**. The model id

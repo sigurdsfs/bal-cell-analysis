@@ -26,7 +26,7 @@
     USAGE
       .\install.ps1 -DryRun        # report what it would do, change nothing
       .\install.ps1                # do it
-      .\install.ps1 -WithCpsam     # also fetch the 1.23 GB Cellpose-SAM weights
+      .\install.ps1 -SkipCpsam     # skip the 1.23 GB Cellpose-SAM weights
       .\install.ps1 -Force         # recreate environments, re-download, replace junctions
 
     Targets Windows PowerShell 5.1, which is what ships with Windows.
@@ -36,6 +36,9 @@
 param(
     [switch]$DryRun,
     [switch]$Force,
+    # cpsam is fetched by DEFAULT. -SkipCpsam opts out; -WithCpsam is kept so older
+    # command lines still work, and now does nothing.
+    [switch]$SkipCpsam,
     [switch]$WithCpsam,
     [switch]$SkipEnvs,
     [switch]$SkipExtension,
@@ -780,13 +783,15 @@ if ($SkipConfig) {
 SayHead 'Step 6 of 7: model weights'
 # =======================================================================================
 # Not required now -- they download on first use -- but doing it here turns a surprise
-# 4 GB wait in the middle of someone's first segmentation into a known cost up front.
+# multi-GB wait in the middle of someone's first segmentation into a known cost up front.
+# All four by default, about 2.5 GB, so every model the dialog offers works offline
+# afterwards. -SkipCpsam drops the largest if you only ever use cyto3.
 if ($SkipWeights) {
     SaySkip 'skipped (-SkipWeights)'
 } elseif ($DryRun) {
     SayDo 'would fetch: cyto3 (25 MB), nuclei (25 MB), Phikon-v2 (1.2 GB)'
-    if ($WithCpsam) { SayDo 'would also fetch cpsam (1.23 GB)' }
-    else { SaySkip 'cpsam (1.23 GB) not fetched -- pass -WithCpsam if you want Cellpose-SAM ready offline' }
+    if ($SkipCpsam) { SaySkip 'cpsam (1.23 GB) skipped (-SkipCpsam) -- it will download on first use' }
+    else { SayDo 'would also fetch cpsam (1.23 GB)' }
 } else {
     # cellpose 3 exposes models.model_path(); cellpose 4 renamed it to cache_model_path().
     if ($PyCp3 -and (Test-Path $PyCp3)) {
@@ -801,7 +806,7 @@ print("nuclei:", models.model_path("nuclei"))
         if ($r.Code -eq 0) { SayOk "cyto3 + nuclei ready"; foreach ($l in ($r.Text -split "`r?`n")) { Say "         $l" } }
         else { SayWarn 'could not pre-fetch the cellpose 3 weights; they will download on first use' }
     }
-    if ($WithCpsam -and $PySeg -and (Test-Path $PySeg)) {
+    if ((-not $SkipCpsam) -and $PySeg -and (Test-Path $PySeg)) {
         SayDo 'cpsam (1.23 GB)'
         $r = RunPy $PySeg @'
 from cellpose import models
@@ -809,8 +814,8 @@ print("cpsam:", models.cache_model_path("cpsam"))
 '@
         if ($r.Code -eq 0) { SayOk "cpsam ready -- $($r.Text)" }
         else { SayWarn 'could not pre-fetch cpsam; it will download on first use' }
-    } elseif (-not $WithCpsam) {
-        SaySkip 'cpsam (1.23 GB) not fetched -- pass -WithCpsam if you want Cellpose-SAM ready offline'
+    } elseif ($SkipCpsam) {
+        SaySkip 'cpsam (1.23 GB) skipped (-SkipCpsam) -- it will download the first time you pick Cellpose-SAM'
     }
     if ($PySeg -and (Test-Path $PySeg)) {
         SayDo "Phikon-v2 (1.2 GB, the classifier's frozen vision transformer)"
