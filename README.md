@@ -33,8 +33,11 @@ On a machine where this is already set up:
    If the menu is empty, restart QuPath; the scripts folder is a junction (see below).
 3. Draw a rectangle, select it, and run **Segment cells**.
 
-Setting it up from scratch — QuPath, the Cellpose extension, the two conda environments and
-the script junctions — is **[INSTALL.md](INSTALL.md)**.
+On a new machine: install QuPath 0.7.0, Miniconda and the NVIDIA driver, then run
+**`install.cmd`** (try `install.cmd -DryRun` first). It does the conda environments, the
+Cellpose extension, the script junctions, the config and the model weights, and ends by
+running the test harnesses. **[INSTALL.md](INSTALL.md)** has the same thing step by step,
+for doing it by hand or working out why something failed.
 
 ### The tasks
 
@@ -89,6 +92,8 @@ GPU: NVIDIA RTX A2000 12 GB; Cellpose uses it for both the soma and the nucleus 
 Mathilde/
 ├── README.md                    this file
 ├── INSTALL.md                   setting the tools up on a new machine
+├── install.cmd                  double-click entry point for the installer
+├── install.ps1                  one-shot setup: envs, extension, junctions, config, weights
 ├── requirements-cellpose_seg.txt   pip requirements for the cellpose 4 / classifier env
 ├── requirements-cellpose3.txt      pip requirements for the cellpose 3 env
 ├── .gitignore                   excludes slide data, the corpus, models and project data

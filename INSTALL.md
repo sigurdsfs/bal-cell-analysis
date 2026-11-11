@@ -6,6 +6,51 @@ run.
 
 Budget about an hour, most of it downloads.
 
+---
+
+## The short way: run the installer
+
+Install **QuPath 0.7.0**, **Miniconda** and the **NVIDIA driver** yourself — those are three
+separate installers with their own licence prompts, and silently automating someone else's
+installer is how you end up with a broken machine and no error message. Then:
+
+```
+install.cmd -DryRun      # report what it would do, change nothing
+install.cmd              # do it
+```
+
+(Or `.\install.ps1` directly. The `.cmd` wrapper exists because Windows blocks
+double-clicked `.ps1` files by default; it bypasses that for one process only and changes
+no machine setting.)
+
+It checks everything first and **stops without touching anything** if a prerequisite is
+missing, naming what to install. Then it creates both conda environments from the pinned
+requirements, confirms PyTorch can actually see the GPU, downloads the Cellpose extension
+into QuPath's extensions folder, makes the script junctions, writes
+`bal_config.local.groovy` with the paths it just found, pre-fetches the model weights so
+your first segmentation is not a 4 GB wait, and finishes by running the project's own test
+harnesses.
+
+**It is safe to re-run.** Anything already in place is detected and left alone; nothing is
+deleted or replaced without `-Force`, and an existing `bal_config.local.groovy` is backed up
+before being rewritten.
+
+| Switch | |
+|---|---|
+| `-DryRun` | report only, change nothing |
+| `-WithCpsam` | also fetch the 1.23 GB Cellpose-SAM weights |
+| `-Force` | recreate environments, re-download, replace junctions |
+| `-SkipEnvs` `-SkipExtension` `-SkipWeights` `-SkipConfig` `-SkipVerify` | do part of it |
+| `-CondaExe` `-QuPathDir` `-QuPathUserDir` | override detection |
+
+Four things it cannot do, and lists for you at the end: restart QuPath, create the project
+and pick the image series, set the class list (it belongs to the QuPath *window*, so QuPath
+would overwrite anything written headlessly), and the one real end-to-end test — segmenting
+a rectangle.
+
+The rest of this file is what the installer does, step by step, for when you want to do it
+by hand or work out why something failed.
+
 **Every version below was read off the working machine**, not from documentation, so these
 are versions known to work together rather than "latest". The two `requirements-*.txt` files
 in the repository root were generated the same way, and both were checked against their own
