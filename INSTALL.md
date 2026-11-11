@@ -41,7 +41,26 @@ before being rewritten.
 | `-WithCpsam` | also fetch the 1.23 GB Cellpose-SAM weights |
 | `-Force` | recreate environments, re-download, replace junctions |
 | `-SkipEnvs` `-SkipExtension` `-SkipWeights` `-SkipConfig` `-SkipVerify` | do part of it |
+| `-CpuOnly` / `-Cuda` | force the CPU or CUDA build of PyTorch instead of auto-detecting |
+| `-ExtensionZip <path>` | install the Cellpose extension from a zip you downloaded by hand |
+| `-ExtensionZipUrl <url>` | fetch it from an internal mirror instead of GitHub |
+| `-EnvSuffix <text>` | append to both environment names, for a trial install that cannot touch a working one |
 | `-CondaExe` `-QuPathDir` `-QuPathUserDir` | override detection |
+
+**No GPU is fine.** The installer detects it and installs the CPU build of PyTorch instead,
+which also saves about 2.5 GB of CUDA libraries that could never load. Measured on the
+development machine: cyto3 segmentation is **about 7x slower on CPU** — 4.4 s against 0.6 s
+for a 1024 px tile. A region you draw by hand still finishes in seconds to a minute, so the
+interactive workflow is unaffected; a whole slide goes from roughly 2.4 hours to most of a
+day, which is an overnight `qupath_batch_slides.groovy` run rather than a wait. Not measured
+on CPU: cpsam (a 304M-parameter transformer — expect considerably worse than 7x) and the
+Phikon-v2 classifier, so prefer cyto3 on a machine without a GPU.
+
+**It never downloads the Cellpose extension twice.** An extension already installed through
+QuPath's own extension catalog lives under `extensions\catalogs\...` rather than loose in
+`extensions\`, and is detected there. The download is the only step that needs the internet;
+if your network blocks it, drop the release zip next to `install.ps1` or pass
+`-ExtensionZip`, and the installer uses that instead.
 
 Four things it cannot do, and lists for you at the end: restart QuPath, create the project
 and pick the image series, set the class list (it belongs to the QuPath *window*, so QuPath

@@ -42,6 +42,14 @@ param(
     [switch]$SkipWeights,
     [switch]$SkipConfig,
     [switch]$SkipVerify,
+    [switch]$CpuOnly,
+    [switch]$Cuda,
+    [string]$ExtensionZip,
+    [string]$ExtensionZipUrl,
+    # Appended to both environment names, so a trial install cannot touch a working one.
+    # With -QuPathUserDir and -SkipConfig this gives a fully isolated rehearsal:
+    #   .\install.ps1 -EnvSuffix -trial -QuPathUserDir C:\temp\qp-trial -SkipConfig
+    [string]$EnvSuffix,
     [string]$CondaExe,
     [string]$QuPathDir,
     [string]$QuPathUserDir
@@ -50,6 +58,17 @@ param(
 $ErrorActionPreference = 'Stop'
 # Windows PowerShell 5.1 defaults to TLS 1.0 for Invoke-WebRequest, which GitHub refuses.
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+# Let the system proxy present the logged-in user's credentials. On a hospital or university
+# network an authenticating proxy refuses anonymous requests, and Invoke-WebRequest reports
+# that as "unable to connect to the remote server" -- which reads like the site being down.
+# This is the way to do it: -ProxyUseDefaultCredentials cannot be used without also passing
+# -Proxy, so adding that switch to the call makes EVERY request fail with a missing-parameter
+# error instead, on every machine, network or not.
+try {
+    if ([System.Net.WebRequest]::DefaultWebProxy) {
+        [System.Net.WebRequest]::DefaultWebProxy.Credentials = [System.Net.CredentialCache]::DefaultNetworkCredentials
+    }
+} catch { }
 
 # --- everything printed also goes to a file -------------------------------------------
 # WHY: when this fails on a machine nobody can look at, "it didn't work" is not something
@@ -68,11 +87,20 @@ try {
 # --- pinned, because "latest" is how a working install stops working -------------------
 $EXT_VERSION  = '0.12.1'
 $EXT_ZIP_URL  = "https://github.com/BIOP/qupath-extension-cellpose/releases/download/v$EXT_VERSION/qupath-extension-cellpose-$EXT_VERSION.zip"
+# -ExtensionZipUrl points this at an internal mirror, for a network that cannot reach GitHub.
+if ($ExtensionZipUrl) { $EXT_ZIP_URL = $ExtensionZipUrl }
 $EXT_JAR      = "qupath-extension-cellpose-$EXT_VERSION.jar"
 $EXT_QC       = 'run-cellpose-qc.py'          # ships inside the same zip
+# The QC script on its own, for when the extension came from a catalog (which installs the
+# jar but not this) -- 15 KB instead of fetching the whole release again.
+$EXT_QC_URL   = "https://raw.githubusercontent.com/BIOP/qupath-extension-cellpose/v$EXT_VERSION/QC/run-cellpose-qc.py"
 $PY_VERSION   = '3.11'
 $ENV_SEG      = 'cellpose_seg'
 $ENV_CP3      = 'cellpose3'
+if ($EnvSuffix) {
+    $ENV_SEG = "$ENV_SEG$EnvSuffix"
+    $ENV_CP3 = "$ENV_CP3$EnvSuffix"
+}
 $PHIKON       = 'owkin/phikon-v2'
 
 $RepoRoot   = $PSScriptRoot
@@ -129,6 +157,7 @@ Say '================================================================'
 Say ' BAL segmentation / classification -- environment setup'
 Say '================================================================'
 if ($DryRun) { Write-Host ' DRY RUN: nothing will be changed.' -ForegroundColor Magenta }
+if ($EnvSuffix) { Write-Host " ISOLATED: environments are '$ENV_SEG' and '$ENV_CP3'." -ForegroundColor Magenta }
 
 # =======================================================================================
 SayHead 'Step 0 of 7: checking what is already here'
@@ -173,13 +202,45 @@ if ($CondaExe) {
 }
 
 # --- GPU -------------------------------------------------------------------------------
+# A missing GPU is NOT a reason to stop. It only decides which PyTorch build to install.
+$HasNvidiaGpu = $false
 $smi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
 if ($smi) {
     $gpu = CaptureNative $smi.Source @('--query-gpu=name,memory.total,driver_version', '--format=csv,noheader')
-    SayOk "GPU: $gpu"
+    if ($LASTEXITCODE -eq 0 -and $gpu) {
+        $HasNvidiaGpu = $true
+        SayOk "GPU: $gpu"
+    } else {
+        SayWarn "nvidia-smi is installed but reported nothing usable. Treating this as a machine without a GPU."
+    }
 } else {
-    SayWarn 'nvidia-smi not found. Without an NVIDIA GPU and driver this project runs, but segmentation is impractically slow (hours per region instead of seconds). PyTorch brings its own CUDA runtime, so you need the DRIVER only, not a CUDA toolkit.'
-    AddTodo 'Install the NVIDIA driver if this machine has an NVIDIA GPU.'
+    SayOk 'No NVIDIA GPU found -- that is fine, see below.'
+}
+
+# -Cuda and -CpuOnly override the detection, for a machine whose driver is not installed yet
+# or one where nvidia-smi lies.
+if ($Cuda -and $CpuOnly) { SayBad 'Pass -Cuda or -CpuOnly, not both.' }
+if ($Cuda)        { $UseCuda = $true }
+elseif ($CpuOnly) { $UseCuda = $false }
+else              { $UseCuda = $HasNvidiaGpu }
+
+if ($UseCuda) {
+    SayOk 'Installing the CUDA build of PyTorch (torch 2.14.0+cu126).'
+    if (-not $HasNvidiaGpu) { SayWarn '-Cuda was passed but no GPU was detected; PyTorch will fall back to the CPU until a driver is installed.' }
+} else {
+    # Measured on the development machine, cyto3 on a 1024 px tile: 0.62 s on an RTX A2000
+    # against 4.43 s on CPU. Seven times slower is slow, not unusable -- and that machine's
+    # real slide data takes ~3 s a tile on the GPU, so expect ~20 s a tile on CPU.
+    if ($HasNvidiaGpu) { SayWarn '-CpuOnly was passed, so the CPU build of PyTorch will be installed even though a GPU is present.' }
+    else { SayWarn 'No GPU, so the CPU build of PyTorch will be installed instead. EVERYTHING STILL WORKS.' }
+    SayWarn 'Measured: cyto3 segmentation is about 7x slower on CPU (4.4 s against 0.6 s per'
+    SayWarn '1024 px tile). A region you draw by hand still finishes in seconds to a minute,'
+    SayWarn 'which is the interactive workflow. A WHOLE SLIDE goes from about 2.4 hours to most'
+    SayWarn 'of a day, so use qupath_batch_slides.groovy overnight rather than waiting on it.'
+    SayWarn 'Not measured on CPU: cpsam (a 304M transformer, expect far worse than 7x) and the'
+    SayWarn 'Phikon-v2 classifier. Prefer cyto3 on a CPU machine.'
+    SayWarn 'This also saves ~2.5 GB: the CUDA build ships libraries a CPU machine cannot use.'
+    AddTodo 'Running on CPU. If this machine does have an NVIDIA GPU, install the driver and re-run with -Force -Cuda; PyTorch brings its own CUDA runtime, so you need the driver only, not a CUDA toolkit.'
 }
 
 # --- QuPath ----------------------------------------------------------------------------
@@ -232,6 +293,60 @@ SayHead "Step 1 of 7: conda environments"
 # =======================================================================================
 # WHY TWO: cellpose 3 and cellpose 4 are different packages with the same name and cannot
 # coexist. cpsam is a cellpose-4 model; cyto2/cyto3/nuclei are cellpose-3 models.
+
+function FetchFile {
+    # Downloads a URL, trying more than one transport.
+    #
+    # WHY: Invoke-WebRequest in Windows PowerShell 5.1 does not present credentials to an
+    # authenticating proxy unless told to, and on a hospital or university network that comes
+    # back as "unable to connect to the remote server" -- which sounds like the site is down
+    # when in fact the proxy refused an anonymous request. curl.exe ships with Windows 10+,
+    # goes through WinHTTP/schannel, and frequently succeeds where IWR fails, so it is tried
+    # second. GitHub releases also redirect to objects.githubusercontent.com, which some
+    # filters block separately from github.com.
+    #
+    # Returns $true on success. NEVER throws: a failed download must not kill the run.
+    param([string]$Url, [string]$OutFile)
+
+    try {
+        Say "  . Invoke-WebRequest $Url"
+        Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing -ErrorAction Stop
+        if ((Test-Path $OutFile) -and ((Get-Item $OutFile).Length -gt 0)) { return $true }
+    } catch {
+        SayWarn "Invoke-WebRequest failed: $($_.Exception.Message)"
+    }
+
+    $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+    if ($curl) {
+        try {
+            Say "  . curl.exe -L $Url"
+            # -f so an HTTP error is a non-zero exit rather than a saved error page.
+            & $curl.Source '-fLsS' '-o' $OutFile $Url
+            if ($LASTEXITCODE -eq 0 -and (Test-Path $OutFile) -and ((Get-Item $OutFile).Length -gt 0)) { return $true }
+            SayWarn "curl.exe exited $LASTEXITCODE"
+        } catch {
+            SayWarn "curl.exe failed: $($_.Exception.Message)"
+        }
+    }
+    return $false
+}
+
+function ResolveReq {
+    # Which requirements file to actually install from.
+    #
+    # The files pin torch 2.14.0+cu126, which is correct on a GPU machine and 2.5 GB of dead
+    # weight without one -- CUDA libraries that can never load. On a CPU machine the two
+    # torch lines and the index URL are rewritten to the CPU build, which exists at the same
+    # versions (torch-2.14.0+cpu and torchvision-0.29.0+cpu, both checked on the index).
+    # A temp copy, so the committed files stay the GPU truth and nothing is edited in place.
+    param([string]$ReqFile)
+    if ($UseCuda) { return $ReqFile }
+    $tmp = Join-Path $env:TEMP ('bal-cpu-' + (Split-Path $ReqFile -Leaf))
+    $rewritten = (Get-Content $ReqFile) -replace '\+cu126', '+cpu' -replace 'whl/cu126', 'whl/cpu'
+    Set-Content -Path $tmp -Value $rewritten -Encoding ASCII
+    SaySkip "using a CPU-only copy of $(Split-Path $ReqFile -Leaf)"
+    return $tmp
+}
 
 function TosHint {
     # The commonest reason conda create fails on a FRESH Miniconda in 2026: conda 26 gates
@@ -307,8 +422,9 @@ function MakeEnv {
         }
     }
     SayDo "installing $(Split-Path $ReqFile -Leaf) into '$Name'"
-    # The requirements file carries its own --extra-index-url for the +cu126 wheels.
-    $rc = RunNative $CondaExe @('run', '-n', $Name, '--no-capture-output', 'python', '-m', 'pip', 'install', '-r', $ReqFile) "pip install into $Name"
+    # The requirements file carries its own --extra-index-url for the torch wheels.
+    $actualReq = ResolveReq $ReqFile
+    $rc = RunNative $CondaExe @('run', '-n', $Name, '--no-capture-output', 'python', '-m', 'pip', 'install', '-r', $actualReq) "pip install into $Name"
     if ($rc -ne 0) {
         SayBad "pip install failed for '$Name' (exit $rc) -- pip's own error is above, and in $LogFile"
         SayWarn 'If it says "No matching distribution found for torch==2.14.0+cu126": that wheel exists only on'
@@ -339,9 +455,10 @@ if ($PySeg) { SayOk "cellpose_seg python: $PySeg" } else { SayWarn 'could not re
 if ($PyCp3) { SayOk "cellpose3 python:    $PyCp3" } else { SayWarn 'could not resolve the cellpose3 interpreter' }
 
 # =======================================================================================
-SayHead 'Step 2 of 7: is the GPU actually visible to PyTorch?'
+SayHead 'Step 2 of 7: what PyTorch actually ended up with'
 # =======================================================================================
-# The single most common silent failure: everything installs, nothing uses the GPU.
+# On a GPU machine this catches the commonest silent failure: everything installs and
+# nothing uses the GPU. On a CPU machine a False here is the expected answer, not a fault.
 foreach ($pair in @(@($ENV_SEG, $PySeg), @($ENV_CP3, $PyCp3))) {
     $name = $pair[0]; $py = $pair[1]
     if (-not $py) { SaySkip "$name -- no interpreter to test"; continue }
@@ -354,8 +471,15 @@ print("torch", torch.__version__, "cuda", torch.version.cuda, "available", ok, n
 '@
     $r = RunPy $py $probe
     $txt = $r.Text
-    if ($txt -match 'available True') { SayOk "$name -- $txt" }
-    else { SayWarn "$name -- $txt"; AddTodo "PyTorch in '$name' cannot see a GPU. Fix the NVIDIA driver; reinstalling PyTorch will not help, the CUDA runtime is already inside the wheel." }
+    if ($txt -match 'available True') {
+        SayOk "$name -- $txt"
+    } elseif (-not $UseCuda) {
+        # Expected: the CPU build was installed on purpose. Not a fault, and not a to-do.
+        SayOk "$name -- CPU build, as chosen. $txt"
+    } else {
+        SayWarn "$name -- $txt"
+        AddTodo "The CUDA build is installed in '$name' but no GPU is visible to it. Install or update the NVIDIA driver -- reinstalling PyTorch will not help, the CUDA runtime is already inside the wheel. It still runs on the CPU meanwhile, about 7x slower for cyto3."
+    }
 }
 
 # =======================================================================================
@@ -363,37 +487,117 @@ SayHead 'Step 3 of 7: the QuPath Cellpose extension'
 # =======================================================================================
 $jarPath = Join-Path $ExtDir $EXT_JAR
 $qcPath  = Join-Path $ExtDir $EXT_QC
+
+# Is the extension ALREADY installed, by any route? QuPath 0.7 can install extensions from a
+# catalog, which puts the jar at
+#   extensions\catalogs\<catalog>\<extension name>\v<version>\main-jar\qupath-extension-cellpose-<v>.jar
+# instead of loose in extensions\. A catalog install is a perfectly good install, and looking
+# only for the loose jar made the installer re-download the one thing it needs the internet
+# for -- on a machine that already had it.
+$existingJar = $null
+if (Test-Path $ExtDir) {
+    $existingJar = Get-ChildItem -Path $ExtDir -Filter 'qupath-extension-cellpose-*.jar' -Recurse -ErrorAction SilentlyContinue |
+                   Where-Object { $_.Name -notmatch 'javadoc|sources' } |
+                   Select-Object -First 1
+}
+
 if ($SkipExtension) {
     SaySkip 'skipped (-SkipExtension)'
-} elseif ((Test-Path $jarPath) -and (Test-Path $qcPath) -and (-not $Force)) {
-    SaySkip "extension $EXT_VERSION and its QC script are already in $ExtDir"
+} elseif ($existingJar -and (-not $Force)) {
+    SayOk "Cellpose extension already installed: $($existingJar.Name)"
+    SaySkip "  at $($existingJar.DirectoryName)"
+    if ($existingJar.Name -notmatch [regex]::Escape($EXT_VERSION)) {
+        SayWarn "That is not version $EXT_VERSION, which is what this project is pinned to and tested against. It will probably work; if segmentation behaves oddly, install $EXT_VERSION."
+    }
+    # A catalog install brings the jar but not the QC script, which lives loose in
+    # extensions\. Optional: without it, training still runs and QuPath reports that the QC
+    # step was skipped. So fetch it quietly and never make it a problem.
+    if (Test-Path $qcPath) {
+        SaySkip "  run-cellpose-qc.py already present"
+    } elseif ($DryRun) {
+        SayDo "would fetch run-cellpose-qc.py (15 KB, optional -- training QC only)"
+    } else {
+        SayDo 'fetching run-cellpose-qc.py (optional, for training quality control)'
+        if (FetchFile $EXT_QC_URL $qcPath) {
+            SayOk "installed run-cellpose-qc.py ($([math]::Round((Get-Item $qcPath).Length/1KB)) KB)"
+        } else {
+            Remove-Item $qcPath -Force -ErrorAction SilentlyContinue
+            SayWarn 'Could not fetch run-cellpose-qc.py. This is OPTIONAL -- training still works,'
+            SayWarn 'QuPath just reports that the quality-control step was skipped. To add it later,'
+            SayWarn "download $EXT_QC_URL into $ExtDir"
+        }
+    }
 } else {
-    SayDo "downloading qupath-extension-cellpose-$EXT_VERSION.zip"
-    if (-not $DryRun) {
+    # A zip already on disk wins: either passed with -ExtensionZip, or just dropped next to
+    # this script. That is the whole workaround for a network that blocks the download.
+    $localZip = $null
+    if ($ExtensionZip) {
+        if (Test-Path $ExtensionZip) { $localZip = (Resolve-Path $ExtensionZip).Path }
+        else { SayWarn "-ExtensionZip $ExtensionZip does not exist; will try to download instead" }
+    }
+    if (-not $localZip) {
+        $beside = Join-Path $PSScriptRoot "qupath-extension-cellpose-$EXT_VERSION.zip"
+        if (Test-Path $beside) {
+            $localZip = $beside
+            SayOk "using the zip found beside this script: $beside"
+        }
+    }
+
+    if ($DryRun) {
+        if ($localZip) { SayDo "would install the extension from $localZip" }
+        else { SayDo "would download $EXT_ZIP_URL" }
+    } else {
         if (-not (Test-Path $ExtDir)) { New-Item -ItemType Directory -Path $ExtDir -Force | Out-Null }
         $tmp = Join-Path $env:TEMP ("bal-ext-" + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $tmp -Force | Out-Null
         try {
-            $zip = Join-Path $tmp 'ext.zip'
-            Invoke-WebRequest -Uri $EXT_ZIP_URL -OutFile $zip -UseBasicParsing
-            Expand-Archive -Path $zip -DestinationPath $tmp -Force
-            # The zip holds the jar and run-cellpose-qc.py. The QC script is optional --
-            # without it training still works and QuPath just reports that QC was skipped --
-            # but it ships here, so there is no reason not to install it.
-            foreach ($leaf in @($EXT_JAR, $EXT_QC)) {
-                $src = Get-ChildItem -Path $tmp -Filter $leaf -Recurse | Select-Object -First 1
-                if ($src) {
-                    Copy-Item $src.FullName (Join-Path $ExtDir $leaf) -Force
-                    SayOk "installed $leaf ($([math]::Round($src.Length/1KB)) KB)"
-                } else {
-                    SayWarn "$leaf was not in the zip -- the release layout may have changed"
-                }
+            $zip = $localZip
+            if (-not $zip) {
+                SayDo "downloading qupath-extension-cellpose-$EXT_VERSION.zip"
+                $zip = Join-Path $tmp 'ext.zip'
+                if (-not (FetchFile $EXT_ZIP_URL $zip)) { $zip = $null }
             }
+            if (-not $zip) {
+                # Report and carry on. The rest of the install is independent of this, and
+                # stopping here used to kill the whole run over one file.
+                SayWarn 'Could not download the Cellpose extension. Everything else below still ran.'
+                Say ''
+                Say '    DO THIS: on any machine with web access, download'
+                Say "      $EXT_ZIP_URL"
+                Say '    then either drop that .zip next to install.ps1 and re-run, or:'
+                Say "      .\install.ps1 -ExtensionZip C:\path\to\qupath-extension-cellpose-$EXT_VERSION.zip"
+                Say ''
+                Say '    Or unzip it yourself and copy both files into:'
+                Say "      $ExtDir"
+                Say ''
+                SayWarn 'If this machine is behind a proxy, set it for this session first:'
+                Say '      $env:HTTPS_PROXY = "http://proxy.example:8080"'
+                SayWarn 'A GitHub release redirects to objects.githubusercontent.com, which some'
+                SayWarn 'filters block separately from github.com -- worth checking with your IT.'
+                AddTodo 'The Cellpose extension is NOT installed. QuPath will have no Cellpose menu and no segmentation until it is -- see the instructions above.'
+            } else {
+                Expand-Archive -Path $zip -DestinationPath $tmp -Force
+                # The zip holds the jar and run-cellpose-qc.py. The QC script is optional --
+                # without it training still works and QuPath just reports QC was skipped --
+                # but it ships here, so there is no reason not to install it.
+                foreach ($leaf in @($EXT_JAR, $EXT_QC)) {
+                    $src = Get-ChildItem -Path $tmp -Filter $leaf -Recurse | Select-Object -First 1
+                    if ($src) {
+                        Copy-Item $src.FullName (Join-Path $ExtDir $leaf) -Force
+                        SayOk "installed $leaf ($([math]::Round($src.Length/1KB)) KB)"
+                    } else {
+                        SayWarn "$leaf was not in the zip -- the release layout may have changed"
+                    }
+                }
+                AddTodo 'Restart QuPath -- extensions are only loaded at startup.'
+            }
+        } catch {
+            SayWarn "Installing the extension failed: $($_.Exception.Message)"
+            AddTodo 'The Cellpose extension may not be installed -- check the Extensions menu in QuPath, and see install-log.txt.'
         } finally {
             Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
-    AddTodo 'Restart QuPath -- extensions are only loaded at startup.'
 }
 
 # =======================================================================================
