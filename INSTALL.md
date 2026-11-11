@@ -21,7 +21,7 @@ run, so treat a failed pin as a pin to relax, not a wall.
 | GPU | NVIDIA RTX A2000 12 GB | Required in practice. Whole-slide segmentation is ~2 h on this GPU; CPU is not viable. |
 | NVIDIA driver | — | **A driver is all you need.** PyTorch ships its own CUDA 12.6 runtime, so do *not* install a CUDA toolkit. |
 | Conda | conda 26.7.2 (Miniconda) | Miniconda or Miniforge; Anaconda works too. |
-| Disk | — | Measured here: **3.6 GB** of model weights (2.4 GB Cellpose + 1.2 GB Phikon-v2) and **5.5 GB** for the `cellpose_seg` environment, plus a smaller `cellpose3`. Allow **~12 GB**. The training corpus is another ~8 GB, but that is data, not install. |
+| Disk | — | Measured here: **5.5 GB** `cellpose_seg` + **4.9 GB** `cellpose3` + **3.6 GB** of model weights (2.4 GB Cellpose, 1.2 GB Phikon-v2) = **~14 GB**. The training corpus is another ~8 GB, but that is data, not install. |
 
 You also need the slide itself. No image data is in the repository — `.vsi`, `.ets` and
 `.zarr` are git-ignored because they are tens of GB.
@@ -142,7 +142,8 @@ What each non-obvious one is for:
 
 ### 3b. `cellpose3`
 
-Much smaller — it only ever runs Cellpose itself.
+Far fewer packages — it only ever runs Cellpose itself — but **not much smaller on disk**:
+4.9 GB against 5.5 GB, because torch dominates both. Do not count on this one being cheap.
 
 ```bash
 conda create -n cellpose3 python=3.11 -y
