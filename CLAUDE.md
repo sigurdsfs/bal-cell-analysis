@@ -50,6 +50,7 @@ The harnesses live in `Mathilde Data/qupath_scripts/tests/`. Run with:
 | `test_summary2.groovy` | training-loss verdicts against synthetic curves |
 | `test_corpus_multislide.groovy` | corpus prefixing, per-slide counts, train/test overlap |
 | `test_region_boundary.groovy` | a cell crossing a region edge: kept **whole**, owned by **one** region, and never claimed away from a Training rectangle (needs no project) |
+| `test_classifier_fields.groovy` | the two classifier boxes: the right one is live per task, never both, and a typed name resolves to a `.joblib` path |
 | `test_notebook_parity.groovy` | **QuPath vs the notebook** on the benchmark region (needs a project) |
 
 **JavaFX initialises headlessly here.** `Platform.startup{}`, then evaluate the GUI script
@@ -105,6 +106,12 @@ tissue block may be — used by `qupath_cellpose_detection.groovy` and
 Standalone helpers: `qupath_test_region.groovy` (benchmark regions),
 `qupath_compare_models.groovy`, `qupath_check_training_setup.groovy`,
 `qupath_setup_classes.groovy`, `qupath_export_cells.groovy`, `qupath_tissue_annotation.groovy`.
+
+**The dialog has two classifier boxes, the worker has one `--model`.** Training writes a file
+that need not exist yet; predicting reads one that must. The GUI is the only place that knows
+the task, so it picks which box to send and passes a single `BAL_CLASSIFIER` — which keeps
+`qupath_classify_cells.groovy` runnable standalone. A typed bare name is resolved against
+`bal_classify/` and given a `.joblib` extension by `resolveModelPath` in the GUI.
 
 **`evaluate()` does not inherit QuPath's default imports.** Prepend the `PRE` block
 (see any worker-calling script) or you get `No such property: ROIs`.

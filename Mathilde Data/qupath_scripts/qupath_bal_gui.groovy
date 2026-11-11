@@ -54,6 +54,16 @@ if (scriptDir == null || !new File(scriptDir, "qupath_cellpose_detection.groovy"
     return
 }
 
+// Machine-specific paths. Only used for the folder the classifier boxes default to and
+// browse from; everything else the dialog needs is passed to the workers, which read their
+// own copy. The literal is a fallback for a fresh machine with no bal_config.
+def CFG = [:]
+try {
+    def cfgFile = new File(scriptDir, "bal_config.groovy")
+    if (cfgFile.exists()) CFG = evaluate(cfgFile) ?: [:]
+} catch (Exception ignored) { }
+def CLASSIFY_DIR = new File(CFG.balClassifyDir ?: "C:/Users/Labsfs/Desktop/Mathilde/Mathilde Data/bal_classify")
+
 // --- remembered settings -----------------------------------------------------
 def prefs = Preferences.userRoot().node("bal_segmentation")
 // Saved values win over the defaults written below, so changing a default here has no
@@ -251,21 +261,59 @@ convertDesc.setWrapText(true)
 convertDesc.setStyle("-fx-font-size: 11px;")
 
 def clustersField = new TextField(prefs.get("clusters", "5"))
-def classifierField = new TextField(prefs.get("classifier", ""))
-classifierField.setPromptText("empty = bal_classify/classifier.joblib")
-def classifierBrowse = new javafx.scene.control.Button("Browse...")
-classifierBrowse.setOnAction({
-    def start = new File("C:/Users/Labsfs/Desktop/Mathilde/Mathilde Data/bal_classify")
-    def filter = new javafx.stage.FileChooser.ExtensionFilter("Classifiers", "*.joblib", "*")
-    def f = qupath.fx.dialogs.FileChoosers.promptForFile(null, "Choose a saved classifier",
-            start.exists() ? start : null, filter)
-    if (f != null) classifierField.setText(f.getAbsolutePath())
+// TWO boxes, because saving and loading are different questions. Training WRITES a file that
+// need not exist yet and that you want to NAME, so one model per experiment survives the
+// next retrain; predicting READS one that must already exist. A single box made those the
+// same text, so training then predicting only worked as long as nobody touched it -- and
+// naming a new model silently redirected the next prediction to a file not yet written.
+def modelFilter = new javafx.stage.FileChooser.ExtensionFilter("Classifiers", "*.joblib", "*")
+def startDir = { CLASSIFY_DIR.exists() ? CLASSIFY_DIR : null }
+// Old single-box preference seeds both, so nobody loses the path they had.
+def legacyModel = prefs.get("classifier", "")
+
+def classifierOutField = new TextField(prefs.get("classifierOut", legacyModel))
+classifierOutField.setPromptText("name or path; empty = bal_classify/classifier.joblib")
+def classifierOutBrowse = new javafx.scene.control.Button("Save as...")
+classifierOutBrowse.setOnAction({
+    // A save prompt, not an open prompt: the file being named usually does not exist yet,
+    // and an open prompt cannot express that.
+    def f = qupath.fx.dialogs.FileChoosers.promptToSaveFile(null, "Save the classifier as",
+            new File(startDir() ?: CLASSIFY_DIR, "classifier.joblib"), modelFilter)
+    if (f != null) classifierOutField.setText(f.getAbsolutePath())
 } as javafx.event.EventHandler)
-def classifierRow = new GridPane()
-classifierRow.setHgap(6)
-classifierRow.add(classifierField, 0, 0)
-classifierRow.add(classifierBrowse, 1, 0)
-GridPane.setHgrow(classifierField, Priority.ALWAYS)
+def classifierOutRow = new GridPane()
+classifierOutRow.setHgap(6)
+classifierOutRow.add(classifierOutField, 0, 0)
+classifierOutRow.add(classifierOutBrowse, 1, 0)
+GridPane.setHgrow(classifierOutField, Priority.ALWAYS)
+
+def classifierInField = new TextField(prefs.get("classifierIn", legacyModel))
+classifierInField.setPromptText("empty = bal_classify/classifier.joblib")
+def classifierInBrowse = new javafx.scene.control.Button("Browse...")
+classifierInBrowse.setOnAction({
+    def f = qupath.fx.dialogs.FileChoosers.promptForFile(null, "Choose a saved classifier",
+            startDir(), modelFilter)
+    if (f != null) classifierInField.setText(f.getAbsolutePath())
+} as javafx.event.EventHandler)
+def classifierInRow = new GridPane()
+classifierInRow.setHgap(6)
+classifierInRow.add(classifierInField, 0, 0)
+classifierInRow.add(classifierInBrowse, 1, 0)
+GridPane.setHgrow(classifierInField, Priority.ALWAYS)
+
+// What you type becomes a path. A bare name is the common case -- the point of naming a
+// model is to keep several of them, not to retype a folder -- so it is resolved against
+// bal_classify/ and given the .joblib extension if it has none. Returns null for empty,
+// which is how the worker is told to use its own default.
+def resolveModelPath = { String raw ->
+    def t = raw?.trim()
+    if (!t) return null
+    def f = new File(t)
+    if (!f.isAbsolute()) f = new File(CLASSIFY_DIR, t)
+    if (!f.getName().toLowerCase().endsWith(".joblib"))
+        f = new File(f.getParentFile(), f.getName() + ".joblib")
+    f
+}
 def reuseCheck = new CheckBox("Reuse existing embeddings (skip the transformer; only if cells are unchanged)")
 reuseCheck.setSelected(prefs.getBoolean("reuseEmb", false))
 // Off by default and deliberately blunt: predicting a cell you labelled by hand replaces
@@ -408,8 +456,11 @@ def syncEnabled = {
               "otherwise every detection -- so avoid leaving a mix, or the plain detections\n" +
               "are silently skipped.")
     clustersField.setDisable(!clsExplore)
-    boolean needsClassifierFile = clsTrain || clsCorpus || clsPredict
-    classifierField.setDisable(!needsClassifierFile); classifierBrowse.setDisable(!needsClassifierFile)
+    // Each box belongs to one direction: training writes, predicting reads. Showing both as
+    // editable would re-create the confusion they were split up to remove.
+    boolean saving = clsTrain || clsCorpus
+    classifierOutField.setDisable(!saving); classifierOutBrowse.setDisable(!saving)
+    classifierInField.setDisable(!clsPredict); classifierInBrowse.setDisable(!clsPredict)
     reuseCheck.setDisable(!classifying)
     overwriteCheck.setDisable(!clsPredict)
     if (!clsPredict) overwriteCheck.setSelected(false)      // never carries over by accident
@@ -635,7 +686,8 @@ addTo(gtGrid, "Training data folder:", corpusRow)
 
 def clsGrid = newGrid()
 addTo(clsGrid, "Clusters (explore):", clustersField)
-addTo(clsGrid, "Classifier file:", classifierRow)
+addTo(clsGrid, "Save classifier as:", classifierOutRow)
+addTo(clsGrid, "Classifier to predict with:", classifierInRow)
 rightTo(clsGrid, reuseCheck)
 rightTo(clsGrid, overwriteCheck)
 
@@ -808,7 +860,9 @@ prefs.putBoolean("saveEach", saveEachCheck.isSelected()); prefs.put("saveEvery",
 prefs.put("convertTo", convertToBox.getValue()); prefs.put("convertScope", convertScopeBox.getValue())
 prefs.putBoolean("convertNuclei", convertNucleiCheck.isSelected())
 prefs.putBoolean("convertCells", convertCellsCheck.isSelected())
-prefs.put("clusters", clustersField.getText()); prefs.put("classifier", classifierField.getText())
+prefs.put("clusters", clustersField.getText())
+prefs.put("classifierOut", classifierOutField.getText())
+prefs.put("classifierIn", classifierInField.getText())
 prefs.putBoolean("reuseEmb", reuseCheck.isSelected())
 prefs.put("corpus", corpusField.getText())
 prefs.put("target", targetBox.getValue())
@@ -875,8 +929,45 @@ if (task.startsWith("Classify cells")) {
                         task.endsWith("corpus (all slides)") ? 'TRAIN_CORPUS' : 'PREDICT'
     BAL_PREDICT_OVERWRITE = overwriteCheck.isSelected()
     BAL_CLUSTERS = Math.max(2, (clustersField.getText()?.trim() ?: "5") as int)
-    BAL_CLASSIFIER = classifierField.getText()?.trim() ?: ""
     BAL_REUSE_EMBEDDINGS = reuseCheck.isSelected()
+
+    // The worker takes ONE --model path and already knows whether it is writing or reading.
+    // Which box that path comes from depends on the task, and this is the only place that
+    // knows the task, so the choice is made here -- and the worker stays unchanged, so it
+    // still runs standalone on a single BAL_CLASSIFIER.
+    def modelFile = resolveModelPath(BAL_CLASSIFY_MODE == 'PREDICT'
+            ? classifierInField.getText() : classifierOutField.getText())
+    if (BAL_CLASSIFY_MODE == 'PREDICT') {
+        // Fail here, naming the file, rather than letting Python exit on a missing path --
+        // the usual cause is a model that was named but never trained.
+        if (modelFile != null && !modelFile.exists()) {
+            Dialogs.showErrorMessage("Classify cells",
+                    "No classifier at\n${modelFile}\n\n" +
+                    "Train one first with 'train classifier' or 'train on labelled corpus',\n" +
+                    "or pick an existing .joblib with Browse.")
+            return
+        }
+        def dflt = new File(CLASSIFY_DIR, "classifier.joblib")
+        if (modelFile == null && !dflt.exists()) {
+            Dialogs.showErrorMessage("Classify cells",
+                    "No classifier at\n${dflt}\n\n" +
+                    "That is the default used when 'Classifier to predict with' is empty.\n" +
+                    "Train one first, or point the box at a saved .joblib.")
+            return
+        }
+        println "Predicting with ${modelFile ?: dflt}"
+    } else if (BAL_CLASSIFY_MODE != 'EXPLORE') {
+        if (modelFile != null && modelFile.getParentFile() != null && !modelFile.getParentFile().exists()) {
+            Dialogs.showErrorMessage("Classify cells",
+                    "The folder for\n${modelFile}\ndoes not exist.\n\n" +
+                    "Create it first, or give just a name to save into bal_classify/.")
+            return
+        }
+        def target = modelFile ?: new File(CLASSIFY_DIR, "classifier.joblib")
+        // Training always refits from scratch, so this really does replace the old file.
+        println target.exists() ? "Will OVERWRITE the classifier at ${target}" : "Will save the classifier to ${target}"
+    }
+    BAL_CLASSIFIER = modelFile?.getAbsolutePath() ?: ""
     println "=== ${task} ==="
     evaluate(PRE + new File(scriptDir, "qupath_classify_cells.groovy").text)
     def mins = (System.currentTimeMillis() - t0) / 60000.0

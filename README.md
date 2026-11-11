@@ -45,6 +45,13 @@ Everything is reachable from **one entry point**: `qupath_bal_gui.groovy`.
 | **Classify cells: train classifier** | Trains a cell-type classifier from the classes you set in this image |
 | **Classify cells: train on labelled corpus** | Trains on every labelled crop from every slide — the model to use on a slide it has not seen |
 | **Classify cells: predict** | Applies a saved classifier and writes the classes back onto the cells. Classes you set by hand are kept unless you ask for them to be re-predicted |
+
+The two training tasks write to **Save classifier as**, and predict reads from **Classifier to
+predict with** — two separate boxes, so naming a new model does not redirect the next
+prediction at a file that has not been written. Either may be a bare name: `corpus_v2`
+becomes `bal_classify/corpus_v2.joblib`. Leave a box empty for `bal_classify/classifier.joblib`.
+Training always refits from scratch over everything in the corpus, so it **replaces** the
+file it writes; keep separate names if you want to compare two models.
 | **Export labelled cells** | One labelled set → Cellpose masks **and** per-class crops for the classifier |
 
 Two scripts run outside the dialog:
