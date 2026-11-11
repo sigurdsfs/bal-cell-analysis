@@ -1,0 +1,48 @@
+# Python requirements for the `cellpose3` environment.
+#
+#   conda create -n cellpose3 python=3.11 -y
+#   conda activate cellpose3
+#   pip install -r requirements-cellpose3.txt
+#
+# This environment runs the cyto2 / cyto3 / nuclei models and their fine-tuning -- the
+# project's default soma model is cyto3 and its nuclei come from cellpose's `nuclei` model.
+# The other environment, requirements-cellpose_seg.txt, does cpsam and all classification.
+# They CANNOT be merged: cellpose 3 and cellpose 4 are different packages with the same name,
+# and a model fine-tuned from one belongs to that generation. See INSTALL.md.
+#
+# Versions are what is installed and working on the development machine (Windows 11,
+# Python 3.11.16, NVIDIA RTX A2000). This environment is far shorter than the other one but
+# NOT much smaller on disk -- 4.9 GB against 5.5 GB, because torch dominates both.
+
+# The +cu126 wheels are not on PyPI. This line is what makes them findable, and it must stay
+# at the top of the file.
+--extra-index-url https://download.pytorch.org/whl/cu126
+
+# --- GPU runtime ------------------------------------------------------------------
+# torch ships its own CUDA 12.6 runtime, so the machine needs an NVIDIA DRIVER and no CUDA
+# toolkit. Verify with: python -c "import torch; print(torch.cuda.is_available())"
+torch==2.14.0+cu126
+
+# --- segmentation -----------------------------------------------------------------
+# cellpose 3.x. Note the different defaults from cellpose 4: the CLI this project drives uses
+# SGD at lr 0.2, where cellpose 4 wants AdamW at 1e-5. Using one's learning rate on the other
+# is wrong by orders of magnitude -- see the table in CLAUDE.md before changing any of it.
+cellpose==3.1.1.3
+
+# --- Cellpose training quality control --------------------------------------------
+# run-cellpose-qc.py (in the QuPath extensions folder) runs automatically at the end of
+# training and imports skimage and scipy. Both come in with cellpose anyway; they are listed
+# because the QC script is a separate file that pip knows nothing about, so its dependency
+# would otherwise be invisible. Without them training still works and QC is skipped.
+scikit-image==0.26.0
+scipy==1.17.1
+
+# --- optional ---------------------------------------------------------------------
+# zarr 2.x, only for reading the converted slide directly from Python. Keep 2.x -- zarr 3
+# changed the API this code uses.
+zarr==2.18.7
+
+# numpy is pulled in by cellpose; this is the version its resolver chose here, and it is
+# DELIBERATELY older than the other environment's 2.4.6 -- cellpose 3's own constraint, and
+# one more reason the two cannot share an environment. Drop the pin if pip reports a conflict.
+numpy==2.0.2

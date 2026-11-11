@@ -7,9 +7,11 @@ run.
 Budget about an hour, most of it downloads.
 
 **Every version below was read off the working machine**, not from documentation, so these
-are versions known to work together rather than "latest". The `conda`/`pip` commands are a
-reconstruction of how to reach that state — they are not transcripts of commands that were
-run, so treat a failed pin as a pin to relax, not a wall.
+are versions known to work together rather than "latest". The two `requirements-*.txt` files
+in the repository root were generated the same way, and both were checked against their own
+environment with `pip install --dry-run`: no conflicts, nothing to change. That proves the
+pins are mutually consistent — it does **not** prove a fresh machine can resolve them from
+the network, so treat a failed pin as a pin to relax, not a wall.
 
 ---
 
@@ -119,14 +121,13 @@ Both are Python **3.11.16** here, and both use **torch 2.14.0+cu126**.
 ```bash
 conda create -n cellpose_seg python=3.11 -y
 conda activate cellpose_seg
-
-# PyTorch with the CUDA 12.6 runtime, from PyTorch's own index.
-pip install torch==2.14.0 torchvision==0.29.0 --index-url https://download.pytorch.org/whl/cu126
-
-pip install cellpose==4.2.1.1
-pip install transformers==5.17.0 scikit-learn==1.9.1 pandas==3.0.5 pyarrow==25.0.1 \
-            joblib==1.6.0 pillow==12.3.0 matplotlib==3.11.2 umap-learn==0.5.12 zarr==2.18.7
+pip install -r requirements-cellpose_seg.txt
 ```
+
+`requirements-cellpose_seg.txt` is in the repository root. It carries the
+`--extra-index-url` line that makes the `+cu126` PyTorch wheels findable — those are not on
+PyPI, so installing `torch==2.14.0+cu126` without it fails with "no matching distribution".
+The file pins only direct dependencies and comments each one.
 
 What each non-obvious one is for:
 
@@ -148,8 +149,7 @@ Far fewer packages — it only ever runs Cellpose itself — but **not much smal
 ```bash
 conda create -n cellpose3 python=3.11 -y
 conda activate cellpose3
-pip install torch==2.14.0 --index-url https://download.pytorch.org/whl/cu126
-pip install cellpose==3.1.1.3
+pip install -r requirements-cellpose3.txt
 ```
 
 Note it ends up on **numpy 2.0.2**, while `cellpose_seg` has **2.4.6**. That difference is

@@ -89,6 +89,8 @@ GPU: NVIDIA RTX A2000 12 GB; Cellpose uses it for both the soma and the nucleus 
 Mathilde/
 ├── README.md                    this file
 ├── INSTALL.md                   setting the tools up on a new machine
+├── requirements-cellpose_seg.txt   pip requirements for the cellpose 4 / classifier env
+├── requirements-cellpose3.txt      pip requirements for the cellpose 3 env
 ├── .gitignore                   excludes slide data, the corpus, models and project data
 ├── CLAUDE.md                    conventions and traps for anyone (or any agent) editing the code
 ├── SFS/

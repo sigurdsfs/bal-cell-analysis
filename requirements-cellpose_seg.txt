@@ -1,0 +1,63 @@
+# Python requirements for the `cellpose_seg` environment.
+#
+#   conda create -n cellpose_seg python=3.11 -y
+#   conda activate cellpose_seg
+#   pip install -r requirements-cellpose_seg.txt
+#
+# This environment does cpsam segmentation and ALL classification. The second environment,
+# requirements-cellpose3.txt, does cyto2/cyto3/nuclei. They CANNOT be merged: cellpose 3 and
+# cellpose 4 are different packages with the same name. See INSTALL.md.
+#
+# Versions are what is installed and working on the development machine (Windows 11,
+# Python 3.11.16, NVIDIA RTX A2000). Only direct dependencies are pinned; pip resolves the
+# rest. If a pin cannot be satisfied on your platform, relax that line rather than fighting
+# it -- nothing here depends on an exact patch version.
+
+# The +cu126 wheels are not on PyPI. This line is what makes them findable, and it must stay
+# at the top of the file.
+--extra-index-url https://download.pytorch.org/whl/cu126
+
+# --- GPU runtime ------------------------------------------------------------------
+# torch ships its own CUDA 12.6 runtime, so the machine needs an NVIDIA DRIVER and no CUDA
+# toolkit. Verify with: python -c "import torch; print(torch.cuda.is_available())"
+torch==2.14.0+cu126
+torchvision==0.29.0+cu126
+
+# --- segmentation -----------------------------------------------------------------
+# cellpose 4.x. Its only pretrained model is cpsam, a 304M-parameter transformer; the older
+# cyto2/cyto3/nuclei names belong to cellpose 3 and will NOT load here.
+cellpose==4.2.1.1
+
+# --- the cell-type classifier -----------------------------------------------------
+# transformers loads Phikon-v2 (owkin/phikon-v2), the frozen vision transformer that turns a
+# 128 px crop into 1024 numbers. It is never trained -- what gets fitted and saved is the
+# logistic regression below, with its scaler.
+transformers==5.17.0
+scikit-learn==1.9.1
+joblib==1.6.0
+pillow==12.3.0
+
+# Embeddings travel between QuPath and Python as Parquet, so pyarrow is not optional.
+# NOTE when editing: Parquet round-trips as Arrow-backed columns, and .values then breaks
+# sklearn indexing. Use .to_numpy(dtype=float). See CLAUDE.md.
+pandas==3.0.5
+pyarrow==25.0.1
+
+# --- the "explore" task -----------------------------------------------------------
+# Clusters unlabelled cells and draws the montage you name the clusters from.
+umap-learn==0.5.12
+matplotlib==3.11.2
+
+# --- optional ---------------------------------------------------------------------
+# zarr 2.x, for embed_cells.py --geojson only. That path reads pixels from ONE hard-coded
+# slide and is deprecated; --manifest (crops cut by QuPath) replaced it. Keep 2.x if you want
+# it at all -- zarr 3 changed the API this code uses.
+zarr==2.18.7
+
+# numpy is pulled in by cellpose; this is the version its resolver chose here. Recorded for
+# reproducibility -- drop the pin if pip reports a conflict.
+numpy==2.4.6
+
+# The notebooks in Mathilde Data/*.ipynb run in this environment. Nothing in the pipeline
+# needs Jupyter, so it is left out; uncomment if you want them.
+# jupyter==1.1.1
