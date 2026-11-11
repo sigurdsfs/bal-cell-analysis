@@ -51,6 +51,20 @@ $ErrorActionPreference = 'Stop'
 # Windows PowerShell 5.1 defaults to TLS 1.0 for Invoke-WebRequest, which GitHub refuses.
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
+# --- everything printed also goes to a file -------------------------------------------
+# WHY: when this fails on a machine nobody can look at, "it didn't work" is not something
+# anyone can act on. conda and pip write their real errors to stderr, which scrolls past and
+# is gone the moment the window closes. The transcript keeps the lot, so the whole report is
+# one file to send on.
+$LogFile = Join-Path $PSScriptRoot 'install-log.txt'
+$script:Transcribing = $false
+try {
+    Start-Transcript -Path $LogFile -Force | Out-Null
+    $script:Transcribing = $true
+} catch {
+    Write-Host "  (could not start a log at $LogFile -- $($_.Exception.Message))" -ForegroundColor DarkGray
+}
+
 # --- pinned, because "latest" is how a working install stops working -------------------
 $EXT_VERSION  = '0.12.1'
 $EXT_ZIP_URL  = "https://github.com/BIOP/qupath-extension-cellpose/releases/download/v$EXT_VERSION/qupath-extension-cellpose-$EXT_VERSION.zip"
@@ -207,6 +221,9 @@ if ($script:Problems.Count -gt 0) {
     Write-Host " Stopping. Nothing was changed. Fix these first:" -ForegroundColor Red
     foreach ($p in $script:Problems) { Write-Host "   - $p" -ForegroundColor Red }
     Write-Host '================================================================' -ForegroundColor Red
+    Say ''
+    Say "Full output of this run: $LogFile"
+    if ($script:Transcribing) { try { Stop-Transcript | Out-Null } catch { } }
     exit 1
 }
 
@@ -215,6 +232,39 @@ SayHead "Step 1 of 7: conda environments"
 # =======================================================================================
 # WHY TWO: cellpose 3 and cellpose 4 are different packages with the same name and cannot
 # coexist. cpsam is a cellpose-4 model; cyto2/cyto3/nuclei are cellpose-3 models.
+
+function TosHint {
+    # The commonest reason conda create fails on a FRESH Miniconda in 2026: conda 26 gates
+    # Anaconda's own channels behind their Terms of Service, and refuses to install from a
+    # channel whose ToS has not been accepted. An established machine has already accepted
+    # it, which is exactly why this never shows up where the installer was developed.
+    #
+    # This installer will NOT accept it for you. It is Anaconda's licence agreement, it has
+    # commercial-use conditions, and agreeing to it is the account holder's decision.
+    $accepted = @(
+        (Join-Path $env:USERPROFILE '.conda\tos'),
+        (Join-Path $env:USERPROFILE '.config\conda\tos'),
+        'C:\ProgramData\conda\tos'
+    ) | Where-Object { (Test-Path $_) -and (@(Get-ChildItem $_ -ErrorAction SilentlyContinue).Count -gt 0) }
+
+    Say ''
+    if ($accepted.Count -gt 0) {
+        SayWarn "A channel Terms of Service has been accepted on this machine ($($accepted[0])), so that is probably NOT the cause."
+    } else {
+        SayWarn 'LIKELY CAUSE: no Anaconda Terms of Service acceptance was found on this machine.'
+        SayWarn 'conda 26 refuses to install from a channel whose ToS has not been accepted, and a'
+        SayWarn 'fresh Miniconda has not. Read it, then accept or reject it yourself:'
+        Say ''
+        Say "      `"$CondaExe`" tos view"
+        Say "      `"$CondaExe`" tos accept"
+        Say ''
+        SayWarn 'This installer deliberately does not accept it for you -- it is Anaconda''s licence,'
+        SayWarn 'with commercial-use conditions, and that is your call, not a script''s.'
+        SayWarn 'The alternative is to use Miniforge instead of Miniconda: it defaults to conda-forge,'
+        SayWarn 'which has no such gate, and nothing in this project needs Anaconda''s channels.'
+    }
+    AddTodo 'conda could not create an environment -- see the Terms of Service note above, and install-log.txt.'
+}
 
 function EnvExists {
     param([string]$Name)
@@ -250,12 +300,22 @@ function MakeEnv {
     } else {
         SayDo "creating '$Name' with python $PY_VERSION"
         $rc = RunNative $CondaExe @('create', '-n', $Name, "python=$PY_VERSION", '-y') "conda create $Name"
-        if ($rc -ne 0) { SayBad "conda create failed for '$Name' (exit $rc)"; return }
+        if ($rc -ne 0) {
+            SayBad "conda create failed for '$Name' (exit $rc) -- conda's own error is above, and in $LogFile"
+            TosHint
+            return
+        }
     }
     SayDo "installing $(Split-Path $ReqFile -Leaf) into '$Name'"
     # The requirements file carries its own --extra-index-url for the +cu126 wheels.
     $rc = RunNative $CondaExe @('run', '-n', $Name, '--no-capture-output', 'python', '-m', 'pip', 'install', '-r', $ReqFile) "pip install into $Name"
-    if ($rc -ne 0) { SayBad "pip install failed for '$Name' (exit $rc) -- see the output above" }
+    if ($rc -ne 0) {
+        SayBad "pip install failed for '$Name' (exit $rc) -- pip's own error is above, and in $LogFile"
+        SayWarn 'If it says "No matching distribution found for torch==2.14.0+cu126": that wheel exists only on'
+        SayWarn 'the PyTorch index, and only for CPython 3.11 on 64-bit Windows. Check the environment really is'
+        SayWarn 'python 3.11 (conda run -n ' + $Name + ' python -V), and that the --extra-index-url line survived'
+        SayWarn 'at the top of the requirements file.'
+    }
 }
 
 if ($SkipEnvs) {
@@ -574,6 +634,17 @@ if ($script:Todo.Count -gt 0) {
     Write-Host 'ALSO NOTED:' -ForegroundColor Yellow
     foreach ($t in $script:Todo) { Write-Host "  - $t" -ForegroundColor Yellow }
 }
+if ($script:Problems.Count -gt 0) {
+    Say ''
+    Write-Host 'THINGS THAT FAILED:' -ForegroundColor Red
+    foreach ($p in $script:Problems) { Write-Host "  - $p" -ForegroundColor Red }
+}
+Say ''
+Say "Everything printed above is also in: $LogFile"
+Say 'If you are asking someone else why it failed, send that file -- it has conda'
+Say 'and pip''s own error messages, which scroll past and vanish with the window.'
 Say ''
 Say 'Full detail, and what to do when something fails: INSTALL.md'
 Say ''
+if ($script:Transcribing) { try { Stop-Transcript | Out-Null } catch { } }
+if ($script:Problems.Count -gt 0) { exit 1 }

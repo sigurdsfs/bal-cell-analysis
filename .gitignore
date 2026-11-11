@@ -65,3 +65,6 @@ Mathilde Data/bal_classify/labels.csv
 
 # Timestamped safety copies of the guide
 USER_GUIDE_backup_*.docx
+
+# install.ps1 writes its full console output here, for diagnosing a failed setup.
+install-log.txt
