@@ -25,11 +25,16 @@ Everything is reachable from **one entry point**: `qupath_bal_gui.groovy`.
 
 ## Getting started
 
+On a machine where this is already set up:
+
 1. **Open QuPath 0.7.0** and the project at `QuPath Project/`.
    The image to use is `Image_BAL_#2.vsi - 40x_BF_01` (not `label` or `overview`).
 2. **Automate → User scripts → `qupath_bal_gui`** — one dialog for every task.
    If the menu is empty, restart QuPath; the scripts folder is a junction (see below).
 3. Draw a rectangle, select it, and run **Segment cells**.
+
+Setting it up from scratch — QuPath, the Cellpose extension, the two conda environments and
+the script junctions — is **[INSTALL.md](INSTALL.md)**.
 
 ### The tasks
 
@@ -83,6 +88,7 @@ GPU: NVIDIA RTX A2000 12 GB; Cellpose uses it for both the soma and the nucleus 
 ```
 Mathilde/
 ├── README.md                    this file
+├── INSTALL.md                   setting the tools up on a new machine
 ├── .gitignore                   excludes slide data, the corpus, models and project data
 ├── CLAUDE.md                    conventions and traps for anyone (or any agent) editing the code
 ├── SFS/
