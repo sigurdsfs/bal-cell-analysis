@@ -125,7 +125,14 @@ function RunNative {
     param([string]$Exe, [string[]]$Arguments, [string]$What)
     Say "  > $Exe $($Arguments -join ' ')"
     if ($DryRun) { SayDo "would run: $What"; return 0 }
-    & $Exe @Arguments
+    # | Out-Host, NOT a bare `& $Exe`. A PowerShell function returns EVERYTHING written to
+    # its output stream, so a bare call makes the command's entire stdout part of the return
+    # value: $rc came back as [every line conda printed + the exit code], `$rc -ne 0` was
+    # true for a perfectly successful `conda create`, MakeEnv returned early, and pip never
+    # ran. The result was an environment holding python and nothing else, reported as a
+    # failed create with conda's own success message quoted inside the error.
+    # Out-Host sends the output to the console (and the transcript) without returning it.
+    & $Exe @Arguments | Out-Host
     return $LASTEXITCODE
 }
 
@@ -294,6 +301,23 @@ SayHead "Step 1 of 7: conda environments"
 # WHY TWO: cellpose 3 and cellpose 4 are different packages with the same name and cannot
 # coexist. cpsam is a cellpose-4 model; cyto2/cyto3/nuclei are cellpose-3 models.
 
+function WriteGroovy {
+    # Writes a Groovy file as UTF-8 with NO byte-order mark.
+    #
+    # WHY THIS IS NOT Set-Content -Encoding UTF8: in Windows PowerShell 5.1 that writes a
+    # BOM, and Groovy will not parse one. bal_config.local.groovy came out starting EF BB BF
+    # and died with "Unexpected character: '?' @ line 1, column 1" -- whereupon
+    # bal_config.groovy swallows the error by design (a broken local file must never stop the
+    # pipeline) and silently falls back to its own defaults. On the machine the defaults were
+    # written for that is invisible. On any other machine every path is then wrong, and the
+    # first thing the user sees is "No cellpose_seg environment found for this Windows user".
+    #
+    # UTF8Encoding($false) rather than ASCII, because a Windows user name can contain
+    # non-ASCII characters and those must survive into the paths.
+    param([string]$Path, [string]$Text)
+    [System.IO.File]::WriteAllText($Path, $Text, (New-Object System.Text.UTF8Encoding($false)))
+}
+
 function FetchFile {
     # Downloads a URL, trying more than one transport.
     #
@@ -431,6 +455,20 @@ function MakeEnv {
         SayWarn 'the PyTorch index, and only for CPython 3.11 on 64-bit Windows. Check the environment really is'
         SayWarn 'python 3.11 (conda run -n ' + $Name + ' python -V), and that the --extra-index-url line survived'
         SayWarn 'at the top of the requirements file.'
+        return
+    }
+    # Do not trust the exit code alone. The bug this guards against reported a SUCCESSFUL
+    # conda create as a failure and skipped pip entirely, leaving an environment with python
+    # and nothing else -- and nothing noticed until two steps later. Importing the one
+    # package that matters is a second, independent answer.
+    if ($DryRun) { return }
+    $py = EnvPython $Name
+    if (-not $py) { SayBad "'$Name' has no usable python after install"; return }
+    $r = RunPy $py "import cellpose`nprint('cellpose', cellpose.version)"
+    if ($r.Code -eq 0) { SayOk "'$Name' works -- $($r.Text)" }
+    else {
+        SayBad "'$Name' was built but cellpose does not import in it"
+        foreach ($l in (@($r.Text -split "`r?`n") | Select-Object -Last 4)) { Say "         $l" }
     }
 }
 
@@ -702,12 +740,39 @@ if ($SkipConfig) {
             $backup = "$localCfg.bak-" + (Get-Date -Format 'yyyyMMdd-HHmmss')
             Copy-Item $localCfg $backup
             SayWarn "existing config backed up to $(Split-Path $backup -Leaf)"
-            Set-Content -Path $localCfg -Value $cfgText -Encoding UTF8 -NoNewline
+            WriteGroovy $localCfg $cfgText
             SayOk 'wrote bal_config.local.groovy'
         }
     } else {
-        Set-Content -Path $localCfg -Value $cfgText -Encoding UTF8 -NoNewline
+        WriteGroovy $localCfg $cfgText
         SayOk 'wrote bal_config.local.groovy'
+    }
+
+    # Prove QuPath can actually READ it. bal_config.groovy deliberately swallows a broken
+    # local file so a typo cannot stop the pipeline -- which also means a file it cannot
+    # parse leaves no error anywhere except one line in the log, and every path silently
+    # reverts to the built-in defaults. Writing the file is not the same as it working.
+    if ($QuPathConsole -and -not $SkipVerify) {
+        $probe = Join-Path $env:TEMP ('bal-cfgcheck-' + [guid]::NewGuid().ToString('N') + '.groovy')
+        $cfgPathFwd = ToFwd (Join-Path $ScriptsDir 'bal_config.groovy')
+        $expect = ToFwd $PySeg
+        WriteGroovy $probe "def CFG = evaluate(new File(`"$cfgPathFwd`"))`nprintln 'CHECK_PY=' + CFG.pythonCellpose4[0]"
+        try {
+            $out = & $QuPathConsole script $probe
+            $txt = ($out | Out-String)
+            if ($txt -match 'ignoring bal_config\.local\.groovy') {
+                SayBad 'QuPath could not parse the config that was just written -- it is being ignored, and every path has silently reverted to the defaults in bal_config.groovy.'
+                foreach ($l in (@($txt -split "`r?`n" | Where-Object { $_ -match 'ignoring|Unexpected|error' }) | Select-Object -First 3)) { Say "         $l.Trim()" }
+            } elseif ($txt -match [regex]::Escape("CHECK_PY=$expect")) {
+                SayOk 'QuPath reads it and the python path comes back correct'
+            } else {
+                SayWarn 'QuPath read the config but did not return the expected python path. Check it by hand.'
+            }
+        } catch {
+            SayWarn "could not verify the config through QuPath: $($_.Exception.Message)"
+        } finally {
+            Remove-Item $probe -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 
