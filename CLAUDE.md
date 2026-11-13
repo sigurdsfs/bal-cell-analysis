@@ -51,6 +51,7 @@ The harnesses live in `Mathilde Data/qupath_scripts/tests/`. Run with:
 | `test_corpus_multislide.groovy` | corpus prefixing, per-slide counts, train/test overlap |
 | `test_region_boundary.groovy` | a cell crossing a region edge: kept **whole**, owned by **one** region, and never claimed away from a Training rectangle (needs no project) |
 | `test_classifier_fields.groovy` | the two classifier boxes: the right one is live per task, never both, and a typed name resolves to a `.joblib` path |
+| `test_default_model.groovy` | the default soma model, and that a **remembered** model does not hide a change to it (needs no project) |
 | `test_notebook_parity.groovy` | **QuPath vs the notebook** on the benchmark region (needs a project) |
 
 **JavaFX initialises headlessly here.** `Platform.startup{}`, then evaluate the GUI script

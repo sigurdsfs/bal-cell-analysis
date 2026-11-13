@@ -69,11 +69,14 @@ def prefs = Preferences.userRoot().node("bal_segmentation")
 // Saved values win over the defaults written below, so changing a default here has no
 // effect on anyone who has already run the dialog. Bump this when a default changes in a
 // way that matters, and the stale training settings are dropped once.
-final int DEFAULTS_VERSION = 2
+final int DEFAULTS_VERSION = 3
 if (prefs.getInt("defaultsVersion", 1) < DEFAULTS_VERSION) {
-    ["epochs", "lr", "weightDecay", "trainSize"].each { prefs.remove(it) }
+    // "model" is cleared too: the default moved to Cellpose-SAM, and a remembered "cyto3" is
+    // indistinguishable from a deliberate choice, so the new default would never be seen.
+    ["epochs", "lr", "weightDecay", "trainSize", "model"].each { prefs.remove(it) }
     prefs.putInt("defaultsVersion", DEFAULTS_VERSION)
-    println "Training defaults updated to Cellpose's fine-tuning values (lr 0.1, 100 epochs, weight decay 1e-4)."
+    println "Defaults updated: the model is now Cellpose-SAM (cpsam), and the training settings"
+    println "follow Cellpose's own fine-tuning values. Pick cyto3 again if you prefer it."
 }
 
 // --- the models on offer ------------------------------------------------------
@@ -86,18 +89,18 @@ if (prefs.getInt("defaultsVersion", 1) < DEFAULTS_VERSION) {
 // be seen but not fixed. Cellpose's nuclei model goes through the same correct-export-train
 // loop as everything else.
 def MODELS = [
-    "Cellpose cyto3 (whole cells)": [
-        engine: 'cellpose', arg: 'cyto3', diameter: 58,
-        desc: "RECOMMENDED. Whole cells, cellpose 3. SPLITS CLUMPS BETTER\n" +
-              "than cpsam: on a clumpy test region it found 63 cells against\n" +
-              "cpsam's 40, and it is 2-3x faster. Needs the cell diameter\n" +
-              "(58 px here)."],
     "Cellpose-SAM (cpsam)": [
         engine: 'cellpose', arg: 'cpsam',
-        desc: "Whole cells, via Python + GPU. SCALE-FREE, so cell diameter is\n" +
-              "ignored. Matches the notebook exactly\n" +
-              "(106 cells on the benchmark), but merges dense clumps into\n" +
-              "single objects where cyto3 resolves them."],
+        desc: "DEFAULT. Whole cells, cellpose 4. SCALE-FREE, so the cell\n" +
+              "diameter is ignored and nothing has to be measured first.\n" +
+              "Matches the notebook exactly (106 cells on the benchmark).\n" +
+              "Merges dense clumps that cyto3 resolves, and is 2-3x slower."],
+    "Cellpose cyto3 (whole cells)": [
+        engine: 'cellpose', arg: 'cyto3', diameter: 58,
+        desc: "Whole cells, cellpose 3. SPLITS CLUMPS BETTER than cpsam: on a\n" +
+              "clumpy test region it found 63 cells against cpsam's 40, and\n" +
+              "it is 2-3x faster. Switch to this for crowded smears, and on a\n" +
+              "machine with no GPU. Needs the cell diameter (58 px here)."],
     "Cellpose cyto2 (whole cells)": [
         engine: 'cellpose', arg: 'cyto2', diameter: 58,
         desc: "Whole cells, the older cellpose 2 model. Similar to cyto3\n" +
@@ -124,8 +127,8 @@ def NUCLEUS_MODELS = [
 def modelBox = new ComboBox<String>()
 modelBox.getItems().addAll(MODELS.keySet())
 // The old default named a model that no longer exists; fall back rather than show blank.
-def savedModel = prefs.get("model", "Cellpose cyto3 (whole cells)")
-modelBox.getSelectionModel().select(MODELS.containsKey(savedModel) ? savedModel : "Cellpose cyto3 (whole cells)")
+def savedModel = prefs.get("model", "Cellpose-SAM (cpsam)")
+modelBox.getSelectionModel().select(MODELS.containsKey(savedModel) ? savedModel : "Cellpose-SAM (cpsam)")
 def modelDesc = new Label()
 modelDesc.setWrapText(true)
 modelDesc.setStyle("-fx-font-size: 11px; -fx-text-fill: -fx-accent;")

@@ -106,7 +106,8 @@ boolean REGION_OWNERSHIP = binding.hasVariable('BAL_REGION_OWNERSHIP')  ? BAL_RE
 // --- build the detector -------------------------------------------------
 // Which environment a model needs depends on what it was trained FROM, which cannot be read
 // from the file. cpsam -> cellpose 4; cyto2/cyto3 and anything fine-tuned from them -> cellpose 3.
-// Custom models default to cellpose 3, since cyto3 is this pipeline's base model.
+// Custom models default to cellpose 3: the filename is the only clue, so a fine-tune is
+// treated as cyto-style unless its name says cpsam (our trainer writes that in).
 // Set BAL_MODEL_IS_SAM = true for a model fine-tuned from cpsam.
 boolean isSAM = MODEL == 'cpsam' ||
         (binding.hasVariable('BAL_MODEL_IS_SAM') ? BAL_MODEL_IS_SAM as boolean : false)

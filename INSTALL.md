@@ -84,7 +84,7 @@ the network, so treat a failed pin as a pin to relax, not a wall.
 | Need | This machine has | Notes |
 |---|---|---|
 | OS | Windows 11 Pro | The paths in `bal_config.groovy` are Windows. QuPath and Cellpose run on macOS/Linux, but you would be porting the config. |
-| GPU | NVIDIA RTX A2000 12 GB | Required in practice. Whole-slide segmentation is ~2 h on this GPU; CPU is not viable. |
+| GPU | NVIDIA RTX A2000 12 GB | **Optional.** Whole-slide segmentation is ~2.4 h on this GPU and roughly 7x that on CPU, so interactive work is fine without one and whole slides become an overnight run. The installer warns and carries on. |
 | NVIDIA driver | — | **A driver is all you need.** PyTorch ships its own CUDA 12.6 runtime, so do *not* install a CUDA toolkit. |
 | Conda | conda 26.7.2 (Miniconda) | Miniconda or Miniforge; Anaconda works too. |
 | Disk | — | Measured here: **5.5 GB** `cellpose_seg` + **4.9 GB** `cellpose3` + **~2.5 GB** of model weights (cpsam 1.23 GB, Phikon-v2 1.2 GB, cyto3 and nuclei 25 MB each) = **~13 GB**. The training corpus is another ~8 GB, but that is data, not install. |

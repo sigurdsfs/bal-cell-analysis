@@ -32,8 +32,9 @@ import qupath.lib.objects.PathObjects
 import qupath.lib.objects.PathObject
 import qupath.lib.roi.RoiTools
 
-// Which model draws the outer boundary.
-def CELL_MODEL   = binding.hasVariable('BAL_MODEL')    ? BAL_MODEL.toString()  : 'cyto3'
+// Which model draws the outer boundary. Defaults to cpsam, the pipeline's default soma
+// model; DIAMETER is ignored for it (set to 0 below) and only used by the cyto models.
+def CELL_MODEL   = binding.hasVariable('BAL_MODEL')    ? BAL_MODEL.toString()  : 'cpsam'
 double DIAMETER  = binding.hasVariable('BAL_DIAMETER') ? BAL_DIAMETER as double : 58
 // Which model draws the nuclei. Cellpose's own nuclei model has diam_mean 17 (cyto models
 // use 30), so it rescales differently -- give it the nucleus size, not the cell size.

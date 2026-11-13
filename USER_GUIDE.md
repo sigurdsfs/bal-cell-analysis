@@ -50,16 +50,64 @@ A quick check that everything is in place: open QuPath and look under
 > models; `cpsam` is cellpose 4. The scripts pick the right environment for you from the
 > model you choose, so this only matters when something is missing.
 
-**On a new machine**, run `install.cmd` from the project folder — it creates both
-environments, installs the Cellpose extension, links the scripts into QuPath, writes the
-paths config and fetches the model weights. `install.cmd -DryRun` shows what it would do
-without changing anything. `INSTALL.md` covers the same ground by hand.
+### Installing on a new machine
 
-**No NVIDIA GPU?** Everything still works. Measured: segmentation with cyto3 is about **7×
-slower** on CPU (4.4 s against 0.6 s for a 1024-pixel tile). A region you draw by hand still
-finishes in seconds to a minute; a whole slide becomes an overnight job rather than an
-afternoon one. Prefer `cyto3` over `Cellpose-SAM` on such a machine — cpsam is a
-304-million-parameter transformer and will be much worse than 7× slower.
+**Run `install.cmd` from the project folder.** It is one program that sets the whole thing
+up: both conda environments at pinned versions, the Cellpose extension inside QuPath, the
+scripts linked into QuPath's own scripts folder, the paths config written with the paths it
+found on *that* machine, and the model weights fetched in advance so your first segmentation
+is not a 4 GB wait. It finishes by running the project's test harnesses, and writes
+everything it did to `install-log.txt`.
+
+Three things you install yourself first, because each has its own licence prompt:
+
+- **QuPath 0.7.0**
+- **Miniconda** (Miniforge or Anaconda do as well)
+- **The NVIDIA driver**, if the machine has an NVIDIA card. A *driver* is all you need —
+  PyTorch brings its own CUDA with it, so do **not** install a CUDA toolkit.
+
+Then, in the project folder:
+
+```
+install.cmd -DryRun      checks everything and reports what it would do, changes nothing
+install.cmd              does it
+```
+
+Budget about an hour, nearly all of it downloading, and about 13 GB of disk.
+
+**It checks before it changes anything** and stops naming what is missing, rather than
+leaving you half-installed. **It is safe to re-run**: whatever is already in place is
+detected and left alone, and nothing is replaced without `-Force`.
+
+Switches worth knowing:
+
+| Switch | |
+|---|---|
+| `-DryRun` | report only, change nothing |
+| `-Force` | recreate environments, re-download, replace the script links |
+| `-SkipCpsam` | leave out the 1.23 GB Cellpose-SAM weights |
+| `-ExtensionZip <path>` | install the Cellpose extension from a zip you downloaded by hand — for a machine whose network blocks the download |
+| `-EnvSuffix <text>` | install under different environment names, so a trial cannot disturb a working setup |
+
+**Four things the installer cannot do**, and lists for you when it finishes: restart QuPath,
+create the project and pick the image series (section 2), set the class list (section 5 — it
+belongs to the QuPath *window* rather than the project, so QuPath would overwrite anything
+written from outside), and the one real end-to-end test, which is segmenting a rectangle.
+
+`INSTALL.md` covers the same ground step by step, for doing it by hand or working out why a
+step failed.
+
+### No NVIDIA GPU?
+
+Everything still works. Measured: segmentation with cyto3 is about **7× slower** on CPU
+(4.4 s against 0.6 s for a 1024-pixel tile). A region you draw by hand still finishes in
+seconds to a minute; a whole slide becomes an overnight job rather than an afternoon one.
+The installer detects the missing GPU, installs the CPU build of PyTorch and warns you — it
+does not refuse to install.
+
+**Switch the model to `cyto3` on such a machine.** The default, `Cellpose-SAM`, is a
+304-million-parameter transformer and will be much worse than 7× slower; cyto3 is 6.6
+million parameters and 2–3× faster even on the GPU.
 
 ---
 
@@ -135,12 +183,20 @@ The dropdown explains each one, but in short:
 
 | Model | What it gives you |
 |---|---|
-| **Cellpose cyto3 (whole cells)** *(default)* | Cell outlines. **Best at separating touching cells** — 63 cells against cpsam's 40 on a clumpy test region, and 2–3× faster |
-| **Cellpose-SAM (cpsam)** | Cell outlines. Scale-free, matches the original notebook exactly (106 cells on the benchmark), but merges dense clumps that cyto3 resolves |
+| **Cellpose-SAM (cpsam)** *(default)* | Cell outlines. **Scale-free**, so the cell diameter is ignored and nothing has to be measured before it works. Matches the original notebook exactly (106 cells on the benchmark), but merges dense clumps that cyto3 resolves |
+| **Cellpose cyto3 (whole cells)** | Cell outlines. **Best at separating touching cells** — 63 cells against cpsam's 40 on a clumpy test region, and 2–3× faster. Needs the cell diameter (58 px here) |
 | **Cellpose cyto2 (whole cells)** | The older model. Similar here (71 vs 63 objects on the clumpy region). Worth trying if cyto3 over-splits |
 | **Custom Cellpose model…** | A model you fine-tuned yourself (section 6) |
 
-**Use cyto3** unless you have a reason not to.
+**Start with cpsam**, which is the default. **Switch to cyto3 when cells are touching** —
+look at a clumpy patch and count: if cpsam has drawn one outline around an obvious pair, it
+has merged them, and cyto3 will separate them. Also switch to cyto3 on a machine with no
+GPU (see section 1).
+
+> **The default changed.** It used to be cyto3. If you have run the dialog before, the first
+> run after this update prints a line saying the model has moved to Cellpose-SAM and the
+> remembered choice has been dropped — pick cyto3 again if you prefer it, and it will be
+> remembered as before.
 
 Picking **Custom Cellpose model…** **opens the file chooser straight away**, so you can see
 which model you are about to run while the rest of the settings are still in front of you.
@@ -188,7 +244,7 @@ these slides, so the short answer is *change nothing*.
 | **Pixel size (µm/px)** | 0.137 | The resolution the model works at. Larger = coarser and faster | 0.274 halves the resolution and runs ~4× faster |
 | **Tile size (px)** | 1024 | How the region is cut up for the GPU | Leave it. Throughput was flat across tile sizes, so this buys nothing |
 | **Region padding (µm)** | 20 | How far **outside** your region Cellpose may look, so a cell crossing the edge is segmented whole (see below) | 0 goes back to cutting cells at the edge. Rarely useful |
-| **Cell diameter (px)** | 58 | What cyto2/cyto3 expect a cell to measure; the image is rescaled to match | Only if your cells really are a different size. **0** means "use the model's own value" — the right choice for a model you fine-tuned |
+| **Cell diameter (px)** | 58, and inactive by default | What cyto2/cyto3 expect a cell to measure; the image is rescaled to match. Ignored by cpsam, the default model | Only if your cells really are a different size. **0** means "use the model's own value" — the right choice for a model you fine-tuned |
 | **Nucleus diameter (px)** | 40 | The nucleus model's expected size | Only with the nucleus pass on, and only if your nuclei differ |
 | **Measure the notebook's 12 features** | on | Adds all the per-cell measurements after segmentation | Turn off only if you want outlines and nothing else; the classifier needs these |
 | **Flag oversized objects as Clump/debris above … µm²** | on, 300 | Classifies anything bigger as `Clump/debris` so you can exclude it | Raise it if genuine cells are being flagged. The largest genuine cell measured here was 263 µm² |
@@ -197,9 +253,11 @@ Values are checked before anything runs, and a bad one stops the dialog with a m
 naming the fix. The ranges are: pixel size 0.001–10, tile size 64–4096, region padding 0–100,
 cell expansion 0–100, nucleus diameter 1–1000, clump area 1–1,000,000.
 
-**Cell diameter is greyed out for cpsam, and that is deliberate.** cpsam is scale-free —
-cellpose 4 marks the setting deprecated and ignores it. The field is only live for cyto2,
-cyto3 and models fine-tuned from them.
+**Cell diameter is greyed out with the default model, and that is deliberate.** cpsam is
+scale-free — cellpose 4 marks the setting deprecated and ignores it. The field comes to life
+when you pick cyto2, cyto3 or a model fine-tuned from them, where the image really is
+rescaled by it. So on the default settings there is no cell size to get wrong; the 58 px in
+the field is waiting for cyto3.
 
 ### Cells at the edge of your region
 
@@ -271,7 +329,7 @@ Worth reading rather than skipping — it is how you find out that pairing went 
 
 ```
 Region padding: 20.0 um (146 px) -- cells may extend past the region edge.
-Step 1/3: soma outlines with cyto3...
+Step 1/3: soma outlines with cpsam...
 Cellpose-SAM done (OUTPUT_TYPE=DETECTION): 68 objects created in the selected region(s)
   63 kept, 5 dropped as belonging elsewhere:
     63 whose centroid is inside the region that produced them

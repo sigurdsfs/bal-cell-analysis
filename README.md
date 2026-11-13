@@ -128,15 +128,19 @@ runs. (Hard links were tried first and silently went stale — see CLAUDE.md.)
 ```
      segment                    measure                     classify
   ┌───────────┐            ┌──────────────┐           ┌────────────────┐
-  │  cyto3    │  soma      │ 12 notebook  │ features  │  Phikon-v2     │  cell type
+  │  cpsam    │  soma      │ 12 notebook  │ features  │  Phikon-v2     │  cell type
   │  +        │──────────▶ │ features +   │─────────▶ │  embeddings +  │──────────▶
   │  nuclei   │  nuclei    │ nucleus/cyto │           │  logistic reg. │
   └───────────┘            └──────────────┘           └────────────────┘
 ```
 
-**Default: `cyto3` soma outlines with Cellpose's `nuclei` model paired inside them.**
+**Default: `cpsam` soma outlines with Cellpose's `nuclei` model paired inside them.**
 Pairing gives a true `nc_ratio`, nuclear shape on its own, and cytoplasm colour with the
-nucleus excluded — the features that actually separate BAL cell types.
+nucleus excluded — the features that actually separate BAL cell types. cpsam is the
+default because it is scale-free — nothing has to be measured before it works, and it
+reproduces the notebook exactly. **Switch to `cyto3` on a crowded smear** (63 cells against
+cpsam's 40 on a clumpy test region) **or on a machine with no GPU** (2–3x faster, and a
+much smaller model).
 
 The soma model (cyto2 / cyto3 / cpsam / a fine-tune) and the optional nucleus pass are
 chosen separately: they are different targets with their own ground truth, kept in

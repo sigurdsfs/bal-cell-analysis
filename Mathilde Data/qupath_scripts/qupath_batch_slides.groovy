@@ -8,7 +8,7 @@
  *
  * WHAT IT RUNS PER IMAGE (BAL_BATCH_STEPS, default 'SEGMENT,FEATURES'):
  *   TISSUE    - detect tissue blocks first, so only tissue is segmented
- *   SEGMENT   - the chosen model (default: cyto3 cells + InstanSeg nuclei)
+ *   SEGMENT   - the chosen model (default: cpsam cells + Cellpose nuclei, paired)
  *   FEATURES  - the per-cell measurements
  *   CLASSIFY  - apply a saved classifier (needs BAL_CLASSIFIER)
  *
